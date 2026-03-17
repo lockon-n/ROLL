@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import ray
 from ray.runtime_env import RuntimeEnv
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+from roll.distributed.ray_utils import build_ray_init_kwargs
 from vllm.platforms import current_platform
 from vllm.ray.ray_env import get_env_vars_to_copy
 from vllm.utils.network_utils import get_distributed_init_method, get_ip, get_open_port
@@ -25,7 +26,7 @@ logger = get_logger()
 def initialize_ray_cluster(ray_address: str | None = None):
     if ray.is_initialized():
         return
-    ray.init(address=ray_address)
+    ray.init(**build_ray_init_kwargs(address=ray_address))
 
 
 class CustomRayDistributedExecutor(RayDistributedExecutor):

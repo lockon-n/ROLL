@@ -6,6 +6,7 @@ import ray
 from ray.runtime_env import RuntimeEnv
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+from roll.distributed.ray_utils import build_ray_init_kwargs
 from vllm.v1.executor.ray_executor import RayDistributedExecutor, RayWorkerMetaData
 from vllm.v1.executor.ray_utils import RayWorkerWrapper
 from vllm.platforms import current_platform
@@ -23,7 +24,7 @@ logger = get_logger()
 def initialize_ray_cluster(ray_address: str | None = None):
     if ray.is_initialized():
         return
-    ray.init(address=ray_address)
+    ray.init(**build_ray_init_kwargs(address=ray_address))
 
 
 class CustomRayDistributedExecutor(RayDistributedExecutor):

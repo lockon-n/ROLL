@@ -8,6 +8,7 @@ import msgspec
 import ray
 from ray.runtime_env import RuntimeEnv
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+from roll.distributed.ray_utils import build_ray_init_kwargs
 from vllm import envs
 from vllm.executor.msgspec_utils import encode_hook
 from vllm.executor.ray_distributed_executor import RayDistributedExecutor, RayWorkerMetaData
@@ -16,6 +17,7 @@ from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.platforms import current_platform
 from vllm.ray.ray_env import get_env_vars_to_copy
 from vllm.utils import make_async, get_ip, get_distributed_init_method, get_open_port
+
 from roll.platforms import current_platform as roll_current_platform
 
 from roll.utils.logging import get_logger
@@ -25,7 +27,7 @@ logger = get_logger()
 def initialize_ray_cluster(ray_address: Optional[str] = None):
     if ray.is_initialized():
         return
-    ray.init(address=ray_address)
+    ray.init(**build_ray_init_kwargs(address=ray_address))
 
 class CustomRayDistributedExecutor(RayDistributedExecutor):
 

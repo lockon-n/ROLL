@@ -5,6 +5,7 @@ import time
 
 import ray
 
+from roll.distributed.ray_utils import build_ray_init_kwargs
 from roll.distributed.scheduler.driver_utils import (
     get_driver_rank,
     get_driver_master_addr,
@@ -67,11 +68,13 @@ def init():
 
     if not ray.is_initialized():
         ray.init(
-            address=f"{master_addr}:{master_port}" if manual_start else None,
-            namespace=RAY_NAMESPACE,
-            ignore_reinit_error=True,
-            log_to_driver=not manual_start,
-            runtime_env=runtime_env,
+            **build_ray_init_kwargs(
+                address=f"{master_addr}:{master_port}" if manual_start else None,
+                namespace=RAY_NAMESPACE,
+                ignore_reinit_error=True,
+                log_to_driver=not manual_start,
+                runtime_env=runtime_env,
+            )
         )
         logger.info("Ray cluster initialized")
 
