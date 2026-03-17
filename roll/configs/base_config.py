@@ -322,6 +322,9 @@ class BaseConfig(ScheduleConfig):
         from ..platforms import current_platform
         self.num_gpus_per_node = current_platform.device_count()
 
+        # Auto-fallback: clamp device_mapping to available GPUs
+        self._clamp_device_mappings_to_available_gpus()
+
         if hasattr(self, 'actor_train') and isinstance(self.actor_train, WorkerConfig):
             self.actor_train.system_envs.update({k: v for k, v in self.system_envs.items() if k not in self.actor_train.system_envs})
         if hasattr(self, 'actor_infer') and isinstance(self.actor_infer, WorkerConfig):
@@ -374,6 +377,49 @@ class BaseConfig(ScheduleConfig):
             else:
                 self.num_nodes = (max_gpu_num + self.num_gpus_per_node - 1) // self.num_gpus_per_node
 
+    def _clamp_device_mappings_to_available_gpus(self) -> None:
+        """Clamp all worker device_mappings to the actually available GPUs.
+
+        If a worker's device_mapping references GPU indices beyond what is available
+        (e.g. config requests 8 GPUs but only 1 is visible via CUDA_VISIBLE_DEVICES),
+        automatically shrink device_mapping to use only the available GPUs and log a warning.
+        """
+        available_gpus = self.num_gpus_per_node
+        if available_gpus <= 0:
+            return
+
+        for attribute_name in dir(self):
+            attribute = getattr(self, attribute_name)
+            if not isinstance(attribute, WorkerConfig):
+                continue
+            if attribute.device_mapping is None:
+                continue
+
+            original_mapping = list(attribute.device_mapping)
+            clamped_mapping = [gpu_id for gpu_id in original_mapping if gpu_id < available_gpus]
+
+            if len(clamped_mapping) == len(original_mapping):
+                continue
+
+            if len(clamped_mapping) == 0:
+                # All requested GPUs are out of range, fall back to all available GPUs
+                clamped_mapping = list(range(available_gpus))
+
+            num_gpus_per_worker = attribute.num_gpus_per_worker
+            # Ensure clamped mapping is divisible by num_gpus_per_worker
+            if num_gpus_per_worker > 0 and len(clamped_mapping) % num_gpus_per_worker != 0:
+                usable = (len(clamped_mapping) // num_gpus_per_worker) * num_gpus_per_worker
+                if usable == 0:
+                    usable = num_gpus_per_worker
+                clamped_mapping = clamped_mapping[:usable]
+
+            logger.warning(
+                f"[GPU Fallback] Worker '{attribute_name}': only {available_gpus} GPU(s) available, "
+                f"but device_mapping requested {len(original_mapping)} GPU(s) {original_mapping}. "
+                f"Automatically clamped to {clamped_mapping}."
+            )
+            attribute.device_mapping = clamped_mapping
+            attribute.world_size = len(clamped_mapping) // max(num_gpus_per_worker, 1)
 
     def set_max_steps(self, max_steps: int):
         for attribute_name in dir(self):

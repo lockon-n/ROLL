@@ -1,16 +1,72 @@
-[tool.black]
-line-length = 119
-target-version = ['py310']
+[project]
+name = "roll"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate==1.7.0",
+    "antlr4-python3-runtime==4.9.3",
+    "codetiming",
+    "dacite",
+    "datasets==3.1.0",
+    "deepspeed==0.16.4",
+    "deprecated",
+    "einops",
+    "flash-attn==2.8.1",
+    "flash-linear-attention",
+    "gem-llm==0.0.4",
+    "gym",
+    "gym-sokoban",
+    "gymnasium[toy-text]",
+    "hydra-core",
+    "isort",
+    "jsonlines",
+    "langdetect",
+    "latex2sympy2==1.5.4",
+    "latex2sympy2-extended==1.10.1",
+    "loralib",
+    "math-verify",
+    "mcore-adapter",
+    "mcp",
+    "modelscope",
+    "more-itertools",
+    "nltk>=3.8",
+    "numpy>=2.0",
+    "omegaconf",
+    "openai",
+    "peft==0.12.0",
+    "pybase64",
+    "pycocotools",
+    "pydantic",
+    "pytest",
+    "ray[cgraph,default]==2.48.0",
+    "sglang-router",
+    "swanlab",
+    "sympy",
+    "tensorboard",
+    "tensordict",
+    "torch==2.10.0.*",
+    "torchaudio==2.10.0.*",
+    "torchvision==0.25.0.*",
+    "tqdm",
+    "transformers==5.2.0",
+    "trl==0.9.6",
+    "tyro>=0.5.7",
+    "vllm==0.17.0",
+    "wandb",
+]
 
-[tool.ruff]
-ignore = ["E501", "E741", "W605"]
-select = ["E", "F", "I", "W"]
-line-length = 119
+[tool.uv]
+override-dependencies = [
+    "transformers==5.2.0",
+    "numpy>=2.0",
+]
+no-build-isolation-package = ["flash-attn", "flash-linear-attention"]
+find-links = [
+    "https://github.com/Dao-AILab/flash-attention/releases/expanded_assets/v2.8.3",
+]
 
-# Ignore import violations in all `__init__.py` files.
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["E402", "F401", "F403", "F811"]
-
-[tool.ruff.isort]
-lines-after-imports = 2
-known-first-party = ["roll"]
+[tool.uv.sources]
+mcore-adapter = { path = "mcore_adapter" }
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl" }
