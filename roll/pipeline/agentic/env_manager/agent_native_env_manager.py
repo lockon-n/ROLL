@@ -200,9 +200,13 @@ class AgentNativeStepEnvManager(TrajEnvManager):
 
         messages: List[Dict] = current_cache["observation"]
 
-        prompt_ids = self.tokenizer.apply_chat_template(convert_list_content_str(messages, parse_tool_call_parameter_to_dict=self.pipeline_config.parse_tool_call_parameter_to_dict),
-                                                        tools=self.tools,
-                                                        tokenize=True, add_generation_prompt=True, enable_thinking=False)
+        chat_template_kwargs = dict(tools=self.tools, tokenize=True, add_generation_prompt=True, enable_thinking=False)
+        if self.pipeline_config.chat_template is not None:
+            chat_template_kwargs["chat_template"] = self.pipeline_config.chat_template
+        prompt_ids = self.tokenizer.apply_chat_template(
+            convert_list_content_str(messages, parse_tool_call_parameter_to_dict=self.pipeline_config.parse_tool_call_parameter_to_dict),
+            **chat_template_kwargs
+        )
         input_ids = torch.tensor(prompt_ids, dtype=torch.long).unsqueeze(0)
         attention_mask = torch.tensor([1] * input_ids.shape[1], dtype=torch.long).unsqueeze(0)
         # Huggingface Transformers prefer position_ids to be 0-based.

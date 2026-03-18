@@ -29,6 +29,8 @@ dependencies = [
     "math-verify",
     "mcore-adapter",
     "mcp",
+    "megatron-core",
+    "transformer-engine[pytorch]",
     "modelscope",
     "more-itertools",
     "nltk>=3.8",
@@ -62,7 +64,7 @@ override-dependencies = [
     "transformers==5.2.0",
     "numpy>=2.0",
 ]
-no-build-isolation-package = ["flash-attn", "flash-linear-attention"]
+no-build-isolation-package = ["flash-attn", "flash-linear-attention", "transformer-engine-torch"]
 find-links = [
     "https://github.com/Dao-AILab/flash-attention/releases/expanded_assets/v2.8.3",
 ]
@@ -70,3 +72,4 @@ find-links = [
 [tool.uv.sources]
 mcore-adapter = { path = "mcore_adapter" }
 flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl" }
+megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", tag = "core_dev_r0.16.0" }

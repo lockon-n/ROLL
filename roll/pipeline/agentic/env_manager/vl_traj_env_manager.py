@@ -369,8 +369,11 @@ class VLTrajEnvManager(TrajEnvManager):
             messages = messages[1:]
         assert messages, f"empty messages with {history=}"
         add_generation_prompt = False if messages[-1]["role"] == "assistant" else True
+        chat_template_kwargs = dict(add_generation_prompt=add_generation_prompt, tokenize=False)
+        if self.pipeline_config.chat_template is not None:
+            chat_template_kwargs["chat_template"] = self.pipeline_config.chat_template
         lm_input_texts = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=add_generation_prompt, tokenize=False
+            messages, **chat_template_kwargs
         )
         feature = {
             self.collator.prompt_key: lm_input_texts,

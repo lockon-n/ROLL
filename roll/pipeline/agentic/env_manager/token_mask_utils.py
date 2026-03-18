@@ -20,20 +20,24 @@ def compute_conversation_end_token_id(tokenizer: PreTrainedTokenizer) -> List[in
             return [token_id]
     return []
 
-def custom_apply_chat_template(messages: List[Dict], tokenizer: PreTrainedTokenizer, add_generation_prompt=True, enable_thinking=False, skip_mock_system_prompt=False) -> List:
+def custom_apply_chat_template(messages: List[Dict], tokenizer: PreTrainedTokenizer, add_generation_prompt=True, enable_thinking=False, skip_mock_system_prompt=False, chat_template: str = None) -> List:
     if len(messages) == 0:
         return []
+    kwargs = dict(tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking, return_dict=False)
+    if chat_template is not None:
+        kwargs["chat_template"] = chat_template
     if messages[0]["role"] == "system":
-        token_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking, return_dict=False)
-        return token_ids
+        return tokenizer.apply_chat_template(messages, **kwargs)
     else:
         if skip_mock_system_prompt:
-            token_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking, return_dict=False)
-            return token_ids
+            return tokenizer.apply_chat_template(messages, **kwargs)
         else:
             system_mock = [{"role": "system", "content": ""}]
-            system_token_ids_mock = tokenizer.apply_chat_template(system_mock, tokenize=True, return_dict=False)
-            token_ids = tokenizer.apply_chat_template(system_mock + messages, tokenize=True, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking, return_dict=False)
+            mock_kwargs = dict(tokenize=True, return_dict=False)
+            if chat_template is not None:
+                mock_kwargs["chat_template"] = chat_template
+            system_token_ids_mock = tokenizer.apply_chat_template(system_mock, **mock_kwargs)
+            token_ids = tokenizer.apply_chat_template(system_mock + messages, **kwargs)
             return token_ids[len(system_token_ids_mock):]
 
 def custom_vl_apply_chat_template(messages: List[Dict], collator: DataCollatorWithPaddingForMM, add_generation_prompt=True) -> Dict:
@@ -169,10 +173,12 @@ def token_ids_to_assistant_mask(messages: List[Dict], input_ids_list: List[List]
         if message["role"].lower() in ["assistant"]:
             assistant_token_ids = []
             assistant_mask = []
-            token_id_without_format = tokenizer.encode(message["content"])
+            token_id_without_format = tokenizer.encode(message["content"], add_special_tokens=False)
             first_assistant_idx = len(token_ids)
-            if len(token_id_without_format) > 0:
-                first_assistant_idx = token_ids.index(token_id_without_format[0])
+            for tid in token_id_without_format:
+                if tid in token_ids:
+                    first_assistant_idx = token_ids.index(tid)
+                    break
             assistant_token_ids.extend(token_ids[: first_assistant_idx])
             assistant_mask.extend([0] * first_assistant_idx)
             after_eos_token_id = False

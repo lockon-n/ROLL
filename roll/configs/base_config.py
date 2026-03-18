@@ -323,7 +323,7 @@ class BaseConfig(ScheduleConfig):
         self.num_gpus_per_node = current_platform.device_count()
 
         # Auto-fallback: clamp device_mapping to available GPUs
-        self._clamp_device_mappings_to_available_gpus()
+        # self._clamp_device_mappings_to_available_gpus()
 
         if hasattr(self, 'actor_train') and isinstance(self.actor_train, WorkerConfig):
             self.actor_train.system_envs.update({k: v for k, v in self.system_envs.items() if k not in self.actor_train.system_envs})

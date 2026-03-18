@@ -231,7 +231,26 @@ class AgenticConfig(PPOConfig):
         }
     )
 
+    chat_template_file: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to a custom Jinja2 chat template file. If provided, this template will be used "
+                    "instead of the tokenizer's default chat_template. Useful for preserving thinking "
+                    "content across turns (e.g. Qwen3.5 with enable_thinking)."
+        }
+    )
+
     def __post_init__(self):
+        # Load custom chat template from file
+        import os
+        self.chat_template: Optional[str] = None
+        if self.chat_template_file is not None:
+            if not os.path.isfile(self.chat_template_file):
+                raise FileNotFoundError(f"Chat template file not found: {self.chat_template_file}")
+            with open(self.chat_template_file, "r") as f:
+                self.chat_template = f.read()
+            logger.info(f"Loaded custom chat template from {self.chat_template_file}")
+
         # Handle OPD mapping FIRST before any access to actor_train/actor_infer/reference
         # This ensures student_train/student_infer/teacher are mapped correctly
         self._handle_opd_mapping()
