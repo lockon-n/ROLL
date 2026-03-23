@@ -1,10 +1,26 @@
 import re
 
 
-def default_parser_action_func(text, action_pattern, action_lookup, special_token_list):
+def default_parser_action_func(text, action_pattern, action_lookup, special_token_list, enable_thinking: bool = False):
     if special_token_list is not None:
         for special_token in special_token_list:
             text = text.replace(special_token, "").strip()
+
+    thinking_truncated = False
+    if enable_thinking:
+        think_close_idx = text.find("</think>")
+        if think_close_idx == -1:
+            # Model never closed </think> — treat as no valid output
+            thinking_truncated = True
+            return {
+                "action": None,
+                "action_content": "",
+                "think_content": text,
+                "thinking_truncated": thinking_truncated,
+            }
+        else:
+            # Only search for <answer> in text after </think>
+            text = text[think_close_idx + len("</think>"):]
 
     action = None
     match = re.search(action_pattern, text, re.DOTALL)
@@ -12,7 +28,8 @@ def default_parser_action_func(text, action_pattern, action_lookup, special_toke
         action_info = {
             "action": action,
             "action_content": "",
-            "think_content": ""
+            "think_content": "",
+            "thinking_truncated": thinking_truncated,
         }
         return action_info
     try:
@@ -34,6 +51,7 @@ def default_parser_action_func(text, action_pattern, action_lookup, special_toke
             "action": action,
             "action_content": action_content,
             "think_content": think_content,
+            "thinking_truncated": thinking_truncated,
         }
         return action_info
     except Exception as e:
@@ -42,6 +60,7 @@ def default_parser_action_func(text, action_pattern, action_lookup, special_toke
         action_info = {
             "action": action,
             "action_content": "",
-            "think_content": ""
+            "think_content": "",
+            "thinking_truncated": thinking_truncated,
         }
         return action_info

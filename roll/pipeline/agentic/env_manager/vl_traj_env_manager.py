@@ -188,8 +188,14 @@ class VLTrajEnvManager(TrajEnvManager):
             log_stats["generate_time"].append(generate_timer.last)
 
             with Timer(name="step", logger=None) as step_timer:
-                if generation_stop_reason in [GenerateStopReason.FINISH, GenerateStopReason.MAX_LENGTH]:
+                if generation_stop_reason == GenerateStopReason.FINISH:
                     rollout_cache: RolloutCache = self.step(lm_output)
+                elif generation_stop_reason == GenerateStopReason.MAX_LENGTH:
+                    # Prompt already exceeded sequence_length — no response was generated.
+                    # Mark as terminated and pop the overflowing observation so formulate_rollouts
+                    # only sees turns that fit within sequence_length.
+                    rollout_cache.terminated = True
+                    rollout_cache.truncated = True
             log_stats["step_time"].append(step_timer.last)
 
             if self.running and (rollout_cache.terminated or generation_stop_reason == GenerateStopReason.MAX_LENGTH):
@@ -215,8 +221,8 @@ class VLTrajEnvManager(TrajEnvManager):
         if llm_output.batch is not None:
             response = self.tokenizer.batch_decode(llm_output.batch['responses'], skip_special_tokens=False)[0]
         else:
-            # When MAX_LENGTH, batch may be None, pass stop_reason as action
-            response = self.stop_reason if self.stop_reason else ""
+            # When MAX_LENGTH, batch may be None, pass stop_reason string as action
+            response = self.stop_reason.value if self.stop_reason else ""
 
         with self.thread_lock, self.env_step_limiter:
             observation, reward, terminated, truncated, info = self.env.step(action=response)
@@ -259,6 +265,7 @@ class VLTrajEnvManager(TrajEnvManager):
         if input_ids.shape[1] >= self.pipeline_config.sequence_length:
             self.logger.warning(f"sequence_length = {self.pipeline_config.sequence_length} input_ids length = {input_ids.shape[1]},"
                                 f"maybe you should increase the response_length")
+            rollout_cache.history[-1]["response_ids_length"] = 0
             return DataProto(meta_info={"stop_reason": GenerateStopReason.MAX_LENGTH})
 
         max_new_tokens = min(self.env_config["max_tokens_per_step"],
@@ -369,7 +376,7 @@ class VLTrajEnvManager(TrajEnvManager):
             messages = messages[1:]
         assert messages, f"empty messages with {history=}"
         add_generation_prompt = False if messages[-1]["role"] == "assistant" else True
-        chat_template_kwargs = dict(add_generation_prompt=add_generation_prompt, tokenize=False)
+        chat_template_kwargs = dict(add_generation_prompt=add_generation_prompt, tokenize=False, enable_thinking=self.pipeline_config.enable_thinking)
         if self.pipeline_config.chat_template is not None:
             chat_template_kwargs["chat_template"] = self.pipeline_config.chat_template
         lm_input_texts = self.tokenizer.apply_chat_template(
@@ -453,13 +460,18 @@ class VLTrajEnvManager(TrajEnvManager):
         score_tensor = torch.tensor([0] * len(token_ids), dtype=torch.float).unsqueeze(0)
         score_tensor[0][last_response_idx] = episode_score
 
-        input_ids = input_ids[:, :last_response_idx+1]
-        attention_mask = attention_mask[:, :last_response_idx+1]
+        # Truncate to last response token, capped at sequence_length to prevent overflow
+        truncate_len = min(last_response_idx + 1, self.pipeline_config.sequence_length)
+        input_ids = input_ids[:, :truncate_len]
+        attention_mask = attention_mask[:, :truncate_len]
         position_ids = (
-            position_ids[:, :, : last_response_idx + 1]
+            position_ids[:, :, :truncate_len]
             if position_ids.dim() == 3
-            else position_ids[:, : last_response_idx + 1]
+            else position_ids[:, :truncate_len]
         )
+        response_mask = response_mask[:, :truncate_len]
+        prompt_mask = prompt_mask[:, :truncate_len]
+        score_tensor = score_tensor[:, :truncate_len]
 
         response_length = response_mask.sum(dim=-1).float().mean().item()
         input_ids = pad_to_length(input_ids, length=self.pipeline_config.sequence_length, pad_value=self.tokenizer.pad_token_id)

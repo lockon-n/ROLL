@@ -256,7 +256,7 @@ class TrajEnvManager(BaseEnvManager):
             user_content += self.agent_template.format(**render_dict)
             messages.append({"role": "user", "content": user_content})
 
-        prompt_ids = custom_apply_chat_template(messages=messages, tokenizer=self.tokenizer, add_generation_prompt=True, skip_mock_system_prompt=self.pipeline_config.skip_mock_system_prompt, chat_template=self.pipeline_config.chat_template)
+        prompt_ids = custom_apply_chat_template(messages=messages, tokenizer=self.tokenizer, add_generation_prompt=True, enable_thinking=self.pipeline_config.enable_thinking, skip_mock_system_prompt=self.pipeline_config.skip_mock_system_prompt, chat_template=self.pipeline_config.chat_template)
         history_token_ids = []
         for items in self.rollout_cache.history[:-1]:
             history_token_ids.extend(items["prompt_ids"])

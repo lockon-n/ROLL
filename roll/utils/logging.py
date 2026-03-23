@@ -49,12 +49,16 @@ def reset_file_logger_handler(_logger, log_dir, formatter, WORKER_NAME=None):
 
 logger: Optional[logging.Logger] = None
 logger_log_dir: Optional[str] = None
+# Buffer to hold early log records before the run-specific file handler is created
+_early_buffer: Optional[logging.handlers.MemoryHandler] = None
 
 
 def get_logger() -> logging.Logger:
     r"""
     Gets a standard logger with a stream handler to stdout.
     """
+    from logging.handlers import MemoryHandler
+
     formatter = CustomFormatter(
         fmt=f"[%(asctime)s] [%(filename)s (%(lineno)d)] [%(levelname)s] "
         f"[%(WORKER_NAME)s %(RANK)s / %(WORLD_SIZE)s]"
@@ -62,12 +66,31 @@ def get_logger() -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     log_dir = os.environ.get("ROLL_LOG_DIR", "./output/logs")
-    global logger, logger_log_dir
+    roll_log_dir_set = "ROLL_LOG_DIR" in os.environ
+    global logger, logger_log_dir, _early_buffer
+
     if logger is not None:
         if logger_log_dir == log_dir:
             return logger
-        else:
+        elif roll_log_dir_set:
+            # ROLL_LOG_DIR is now set — create the real file handler and flush buffered early logs
             reset_file_logger_handler(logger, log_dir, formatter)
+            if _early_buffer is not None:
+                # Flush buffered early records to the new file handler
+                file_handler = None
+                for h in logger.handlers:
+                    if isinstance(h, logging.FileHandler):
+                        file_handler = h
+                        break
+                if file_handler is not None:
+                    for record in _early_buffer.buffer:
+                        file_handler.emit(record)
+                    file_handler.flush()
+                logger.removeHandler(_early_buffer)
+                _early_buffer.close()
+                _early_buffer = None
+            return logger
+
     _logger_name = (
         f"log_rank_{os.environ.get('WORKER_NAME', 'DRIVER')}_{os.environ.get('RANK', '0')}_"
         f"{os.environ.get('WORLD_SIZE', '1')}"
@@ -88,7 +111,14 @@ def get_logger() -> logging.Logger:
         err_handler.setLevel(logging.ERROR)
         _logger.addHandler(err_handler)
 
-    reset_file_logger_handler(_logger, log_dir, formatter)
+    if roll_log_dir_set:
+        # ROLL_LOG_DIR already set (e.g. on workers) — create file handler directly
+        reset_file_logger_handler(_logger, log_dir, formatter)
+    else:
+        # ROLL_LOG_DIR not set yet — buffer records in memory until it is
+        _early_buffer = MemoryHandler(capacity=1000, flushLevel=logging.CRITICAL + 1)
+        _early_buffer.setFormatter(formatter)
+        _logger.addHandler(_early_buffer)
 
     logger = _logger
     logger.propagate = False

@@ -12,13 +12,13 @@ hydra:
 
 exp_name: "qwen3_5_0_8B_agentic_sokoban"
 seed: 42
-logging_dir: ./output/logs
-output_dir: ./output
-render_save_dir: ./output/render
+logging_dir: ./output/logs/${exp_name}
+output_dir: ./output/${exp_name}
+render_save_dir: ./output/render/${exp_name}
 
 checkpoint_config:
   type: file_system
-  output_dir: ../../ckpts/test_roll
+  output_dir: ../../ckpts/test_roll/${exp_name}
 
 track_with: wandb
 tracker_kwargs:
@@ -26,15 +26,20 @@ tracker_kwargs:
 
 num_gpus_per_node: 8
 
+chat_template_file: ../../models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
+
 max_steps: 1024
-save_steps: 200
+save_steps: 10
 logging_steps: 1
 eval_steps: 10
 resume_from_checkpoint: false
 
 rollout_batch_size: 1024
-val_batch_size: 1024
+val_batch_size: 512
 sequence_length: 8192
+
+enable_thinking: true
+thinking_penalty: -0.2
 
 advantage_clip: 0.2
 ppo_epochs: 1
@@ -53,12 +58,11 @@ actor_train:
     disable_gradient_checkpointing: false
     dtype: bf16
     model_type: ~
-    freeze_module_prefix: vision_model
   training_args:
     learning_rate: 1.0e-6
     weight_decay: 0
     per_device_train_batch_size: 2
-    gradient_accumulation_steps: 64
+    gradient_accumulation_steps: 16
     warmup_steps: 10
     lr_scheduler_type: cosine
   strategy_args:
@@ -70,7 +74,7 @@ actor_train:
       use_distributed_optimizer: true
       recompute_granularity: full
       bf16: true
-  device_mapping: list(range(1,2))
+  device_mapping: list(range(0,4))
   infer_batch_size: 2
 
 actor_infer:
@@ -78,7 +82,7 @@ actor_infer:
     disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:
-    max_new_tokens: 128
+    max_new_tokens: 1024
     top_p: 0.99
     top_k: 100
     num_beams: 1
@@ -93,7 +97,7 @@ actor_infer:
       enable_prefix_caching: false
       limit_mm_per_prompt:
         image: ${max_actions_per_traj}
-  device_mapping: list(range(1,2))
+  device_mapping: list(range(0,4))
 
 reference:
   model_args:
@@ -105,7 +109,7 @@ reference:
   strategy_args:
     strategy_name: hf_infer
     strategy_config: ~
-  device_mapping: list(range(1,2))
+  device_mapping: list(range(0,4))
   infer_batch_size: 2
 
 reward_normalization:
@@ -114,20 +118,20 @@ reward_normalization:
 
 train_env_manager:
   format_penalty: -0.15
-  max_env_num_per_worker: 32
+  max_env_num_per_worker: 128
   num_env_groups: 128
   group_size: 8
   tags: [SimpleSokoban]
   num_groups_partition: [128]
 
 val_env_manager:
-  max_env_num_per_worker: 64
-  num_env_groups: 1024
+  max_env_num_per_worker: 256
+  num_env_groups: 512
   group_size: 1
   tags: [SimpleSokoban, LargerSokoban, SokobanDifferentGridVocab, FrozenLake]
-  num_groups_partition: [256, 256, 256, 256]
+  num_groups_partition: [128, 128, 128, 128]
 
-max_tokens_per_step: 64
+max_tokens_per_step: 1024
 
 custom_envs:
   SimpleSokoban:

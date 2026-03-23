@@ -24,6 +24,8 @@ class FrozenLakeEnv(Env, GymFrozenLakeEnv):
                  action_lookup=None,
                  env_instruction=None,
                  format_penalty=0.0,
+                 enable_thinking=False,
+                 thinking_penalty=-0.2,
                  action_pattern=r"<answer>(.*?)</answer>",
                  special_token_list=("<|im_start|>", "<|im_end|>"),
                  **kwargs
@@ -53,6 +55,8 @@ class FrozenLakeEnv(Env, GymFrozenLakeEnv):
         self.max_steps = max_steps
         self.render_mode = render_mode
         self.format_penalty = format_penalty
+        self.enable_thinking = enable_thinking
+        self.thinking_penalty = thinking_penalty
         self.action_pattern = action_pattern
         self.special_token_list = special_token_list
 
@@ -86,19 +90,24 @@ class FrozenLakeEnv(Env, GymFrozenLakeEnv):
             "action_is_valid": "mean",
             "success": "last",
             "format_penalty": "mean",
+            "thinking_truncated": "mean",
         }
 
         self.step_count += 1
         action_info = self.parse_action(action)
+        thinking_truncated = action_info.get("thinking_truncated", False)
         if action_info["action"] is None:
             next_obs = self.render()
             action_desc = f"At turn {self.step_count}, You did not provide a valid action."
             reward = self.format_penalty
+            if thinking_truncated:
+                reward += self.thinking_penalty
             metrics = {
                 "action_is_effective": False,
                 "action_is_valid": False,
                 "success": self.desc[self.player_pos] == b"G",
-                "format_penalty": self.format_penalty
+                "format_penalty": self.format_penalty,
+                "thinking_truncated": thinking_truncated,
             }
             info = {
                 "metrics": metrics,
@@ -123,7 +132,8 @@ class FrozenLakeEnv(Env, GymFrozenLakeEnv):
             "action_is_effective": action_effective,
             "action_is_valid": True,
             "success": self.desc[self.player_pos] == b"G",
-            "format_penalty": self.format_penalty
+            "format_penalty": 0,
+            "thinking_truncated": False,
         }
         info = {
             "metrics": metrics,
@@ -137,7 +147,7 @@ class FrozenLakeEnv(Env, GymFrozenLakeEnv):
         return next_obs, reward, terminated, truncated, info
 
     def parse_action(self, text):
-        return default_parser_action_func(text, self.action_pattern, self.ACTION_LOOKUP, self.special_token_list)
+        return default_parser_action_func(text, self.action_pattern, self.ACTION_LOOKUP, self.special_token_list, enable_thinking=self.enable_thinking)
 
     def render(self, mode=None):
         if not mode:

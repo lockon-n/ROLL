@@ -200,7 +200,7 @@ class AgentNativeStepEnvManager(TrajEnvManager):
 
         messages: List[Dict] = current_cache["observation"]
 
-        chat_template_kwargs = dict(tools=self.tools, tokenize=True, add_generation_prompt=True, enable_thinking=False)
+        chat_template_kwargs = dict(tools=self.tools, tokenize=True, add_generation_prompt=True, enable_thinking=self.pipeline_config.enable_thinking)
         if self.pipeline_config.chat_template is not None:
             chat_template_kwargs["chat_template"] = self.pipeline_config.chat_template
         prompt_ids = self.tokenizer.apply_chat_template(

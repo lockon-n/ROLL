@@ -23,6 +23,8 @@ class SokobanEnv(Env, GymSokobanEnv):
                  action_lookup=None,
                  env_instruction=None,
                  format_penalty=0.0,
+                 enable_thinking=False,
+                 thinking_penalty=-0.2,
                  action_pattern="<answer>(.*?)</answer>",
                  special_token_list=("<|im_start|>", "<|im_end|>"),
                  **kwargs):
@@ -48,6 +50,8 @@ class SokobanEnv(Env, GymSokobanEnv):
         self.render_mode = render_mode
 
         self.format_penalty = format_penalty
+        self.enable_thinking = enable_thinking
+        self.thinking_penalty = thinking_penalty
         self.action_pattern = action_pattern
         self.special_token_list = special_token_list
 
@@ -93,21 +97,26 @@ class SokobanEnv(Env, GymSokobanEnv):
             "action_is_valid": "mean",
             "success": "last",
             "format_penalty": "mean",
+            "thinking_truncated": "mean",
         }
         action_info = self.parse_action(action)
+        thinking_truncated = action_info.get("thinking_truncated", False)
 
         if action_info["action"] is None:
             _, reward, terminated, _ = GymSokobanEnv.step(self, 0)
             next_obs = self.render()
 
             reward += self.format_penalty
+            if thinking_truncated:
+                reward += self.thinking_penalty
 
             action_desc = f"At turn {self.num_env_steps}, You did not provide a valid action."
             metrics = {
                 "action_is_effective": False,
                 "action_is_valid": False,
                 "success": self.boxes_on_target == self.num_boxes,
-                "format_penalty": self.format_penalty
+                "format_penalty": self.format_penalty,
+                "thinking_truncated": thinking_truncated,
             }
             info = {
                 "metrics": metrics,
@@ -133,6 +142,7 @@ class SokobanEnv(Env, GymSokobanEnv):
             "action_is_valid": True,
             "success": self.boxes_on_target == self.num_boxes,
             "format_penalty": 0,
+            "thinking_truncated": False,
         }
         info = {
             "metrics": metrics,
@@ -147,7 +157,7 @@ class SokobanEnv(Env, GymSokobanEnv):
         return next_obs, reward, terminated, truncated, info
 
     def parse_action(self, text):
-        return default_parser_action_func(text, self.action_pattern, self.ACTION_LOOKUP, self.special_token_list)
+        return default_parser_action_func(text, self.action_pattern, self.ACTION_LOOKUP, self.special_token_list, enable_thinking=self.enable_thinking)
 
     def render(self, mode=None):
         render_mode = mode if mode is not None else self.render_mode

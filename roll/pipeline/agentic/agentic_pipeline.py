@@ -1,3 +1,4 @@
+import gc
 import json
 import os.path
 import time
@@ -375,6 +376,7 @@ class AgenticPipeline(BasePipeline):
                             avg_ref_log_prob = masked_mean(batch.batch["ref_log_probs"], batch.batch["response_mask"][:, 1:])
                             metrics.update(reduce_metrics(ref_log_probs.meta_info.pop("metrics", {})))
                             metrics.update({"critic/ref_log_prob/mean": avg_ref_log_prob.item()})
+                            del ref_log_probs
                     metrics["time/step_ref_log_probs_values_reward"] = cal_timer.last
 
                     # PHASE 12: Old Log Probs & Values
@@ -416,6 +418,7 @@ class AgenticPipeline(BasePipeline):
                             values = DataProto.materialize_concat(data_refs=values_refs)
                             batch = batch.union(values)
                             metrics.update(reduce_metrics(values.meta_info.pop("metrics", {})))
+                            del values
 
                         # Mock ref_log_probs using old_log_probs if reference cluster is disabled
                         if not self.pipeline_config.enable_reference:
@@ -569,6 +572,12 @@ class AgenticPipeline(BasePipeline):
             self.tracker.log(values=metrics, step=global_step)
 
             logger.info(f"pipeline step {global_step} finished")
+
+            # Free batch data before next step's get_batch to avoid two batches coexisting in memory.
+            # Python's cyclic GC won't reclaim TensorDict cycles on its own schedule, so force it here.
+            del batch
+            gc.collect()
+
             global_step += 1
             logger.info(f"epoch {global_step} finished")
 

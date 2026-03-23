@@ -231,6 +231,22 @@ class AgenticConfig(PPOConfig):
         }
     )
 
+    enable_thinking: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable thinking mode for the model. When True, the model is expected to produce "
+                    "<think>...</think> before the answer. If </think> is missing, a thinking_penalty is applied "
+                    "and the response is treated as having no valid action. Also passed to apply_chat_template."
+        }
+    )
+    thinking_penalty: float = field(
+        default=-0.2,
+        metadata={
+            "help": "Penalty applied when enable_thinking is True but the model fails to close </think> "
+                    "(i.e., thinking was truncated by max_tokens_per_step). This is added on top of format_penalty."
+        }
+    )
+
     chat_template_file: Optional[str] = field(
         default=None,
         metadata={
@@ -242,7 +258,6 @@ class AgenticConfig(PPOConfig):
 
     def __post_init__(self):
         # Load custom chat template from file
-        import os
         self.chat_template: Optional[str] = None
         if self.chat_template_file is not None:
             if not os.path.isfile(self.chat_template_file):
@@ -398,6 +413,9 @@ class AgenticConfig(PPOConfig):
                 # cfg_template.env_config["rank"] = group_id
                 # cfg_template.env_config["world_size"] = env_manager_config.num_env_groups
                 env_config = {**cfg_template.env_config}
+                # Inject model-level thinking config into env config
+                env_config.setdefault("enable_thinking", self.enable_thinking)
+                env_config.setdefault("thinking_penalty", self.thinking_penalty)
 
                 if group_id not in group_seeds:
                     group_seeds[group_id] = random.randint(0, 2**31 - 1)
