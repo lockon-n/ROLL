@@ -14,7 +14,6 @@ from collections import defaultdict
 from typing import Dict
 
 import ray
-from packaging.version import Version
 from ray._private.log_monitor import (
     LogMonitor as RayLogMonitor,
     is_proc_alive,
@@ -188,20 +187,14 @@ class LogMonitorListener:
         self.node_ip_address = ray.util.get_node_ip_address()
         self.rank = get_driver_rank()
         self.world_size = get_driver_world_size()
-        if Version(ray.__version__) >= Version("2.47.0"):
-            self.log_monitor = LogMonitor(
-                node_ip_address=self.node_ip_address,
-                logs_dir=self.log_dir,
-                gcs_publisher=StdPublisher(),
-                is_proc_alive_fn=is_proc_alive,
-            )
-        else:
-            self.log_monitor = LogMonitor(
-                node_ip_address=self.node_ip_address,
-                logs_dir=self.log_dir,
-                gcs_client=StdPublisher(),
-                is_proc_alive_fn=is_proc_alive,
-            )
+        log_monitor_signature = inspect.signature(RayLogMonitor.__init__)
+        publisher_arg_name = "gcs_publisher" if "gcs_publisher" in log_monitor_signature.parameters else "gcs_client"
+        self.log_monitor = LogMonitor(
+            node_ip_address=self.node_ip_address,
+            logs_dir=self.log_dir,
+            is_proc_alive_fn=is_proc_alive,
+            **{publisher_arg_name: StdPublisher()},
+        )
         monitor_logger.setLevel(logging.CRITICAL)
 
         self.exception_monitor = None
