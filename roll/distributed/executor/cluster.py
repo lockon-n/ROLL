@@ -1,10 +1,10 @@
+import copy
 import os
 from typing import List, Type, Dict, Union, Any
 
 import ray
 from ray._private.async_compat import has_async_methods
 from ray._private.worker import RemoteFunctionNoArgs
-from ray.runtime_env import RuntimeEnv
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from roll.configs.worker_config import WorkerConfig
@@ -141,8 +141,9 @@ class Cluster:
                 env_vars["ROLL_LOG_DIR"] = os.environ["ROLL_LOG_DIR"]
             env_vars.update(self.worker_config.system_envs)
 
-            runtime_env = RuntimeEnv(env_vars=env_vars)
-            self.worker_config.resource_placement_groups = pgs
+            per_worker_config = copy.deepcopy(self.worker_config)
+            per_worker_config.system_envs.update(env_vars)
+            per_worker_config.resource_placement_groups = pgs
 
             if has_async_methods(self.worker_cls.__ray_metadata__.modified_class):
                 max_concurrency = (self.worker_config.max_concurrency if self.worker_config.max_concurrency > 1
@@ -156,7 +157,6 @@ class Cluster:
                 "scheduling_strategy": PlacementGroupSchedulingStrategy(placement_group=deploy_pg["placement_group"]),
                 "name": worker_name,
                 "namespace": RAY_NAMESPACE,
-                "runtime_env": runtime_env,
                 "num_cpus": 0.01,
                 "max_concurrency": max_concurrency,
             }
@@ -173,7 +173,7 @@ class Cluster:
                     }
                 )
 
-            worker = self.worker_cls.options(**worker_options).remote(worker_config=self.worker_config)
+            worker = self.worker_cls.options(**worker_options).remote(worker_config=per_worker_config)
             self.workers.append(worker)
             if rank == 0:
                 self.master_addr, self.master_port = ray.get(worker.get_master_addr_and_port.remote())

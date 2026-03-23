@@ -60,11 +60,10 @@ def init():
     master_addr = get_driver_master_addr()
     master_port = get_driver_master_port()
 
-    manual_start = start_ray_cluster()
+    platform_env = current_platform.get_custom_env_vars()
+    os.environ.update(platform_env)
 
-    runtime_env = {
-        "env_vars": current_platform.get_custom_env_vars(),
-    }
+    manual_start = start_ray_cluster()
 
     if not ray.is_initialized():
         ray.init(
@@ -73,7 +72,6 @@ def init():
                 namespace=RAY_NAMESPACE,
                 ignore_reinit_error=True,
                 log_to_driver=not manual_start,
-                runtime_env=runtime_env,
             )
         )
         logger.info("Ray cluster initialized")

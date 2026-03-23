@@ -44,6 +44,9 @@ class RankInfo:
 class Worker:
 
     def __init__(self, worker_config: WorkerConfig):
+        if worker_config.system_envs:
+            os.environ.update(worker_config.system_envs)
+
         if worker_config.offload_nccl:
             monkey_patch_torch_dist()
         self.worker_config = worker_config
