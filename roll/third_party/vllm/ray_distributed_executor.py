@@ -78,7 +78,10 @@ class CustomRayDistributedExecutor(RayDistributedExecutor):
                 ray_remote_kwargs
             )
 
+        use_runtime_env = os.environ.get("ROLL_RAY_RUNTIME_ENV", "0") == "1"
+
         worker_metadata: list[RayWorkerMetaData] = []
+        per_worker_env_vars: list[dict] = []
         driver_ip = get_ip()
         for rank in range(self.parallel_config.world_size):
             pg = placement_group[rank]["placement_group"]
@@ -86,18 +89,22 @@ class CustomRayDistributedExecutor(RayDistributedExecutor):
             env_vars = {}
             env_vars.update(roll_current_platform.get_custom_env_vars())
             env_vars.update(roll_current_platform.get_vllm_run_time_env_vars(gpu_rank))
-            runtime_env = RuntimeEnv(env_vars=env_vars)
-            assert current_platform.ray_device_key == "GPU"
-            # NV+AMD GPUs, and Intel XPUs
-            worker = ray.remote(
+            per_worker_env_vars.append(env_vars)
+
+            ray_kwargs = dict(
                 num_cpus=0,
                 num_gpus=0.01,
-                runtime_env=runtime_env,
                 scheduling_strategy=PlacementGroupSchedulingStrategy(
                     placement_group=pg,
                 ),
                 **ray_remote_kwargs,
-            )(RayWorkerWrapper).remote(rpc_rank=rank)
+            )
+            if use_runtime_env:
+                ray_kwargs["runtime_env"] = RuntimeEnv(env_vars=env_vars)
+
+            assert current_platform.ray_device_key == "GPU"
+            # NV+AMD GPUs, and Intel XPUs
+            worker = ray.remote(**ray_kwargs)(RayWorkerWrapper).remote(rpc_rank=rank)
             worker_metadata.append(RayWorkerMetaData(worker=worker, created_rank=rank))
 
         worker_ips = ray.get(
@@ -163,7 +170,11 @@ class CustomRayDistributedExecutor(RayDistributedExecutor):
 
         # Set environment variables for the driver and workers.
         # remove device_control_env_var(CUDA_VISIBLE_DEVICES), for we only allocate one gpu for each worker
-        all_args_to_update_environment_variables = [{}] * len(worker_node_and_gpu_ids)
+        if not use_runtime_env:
+            # Propagate per-worker env vars via RPC instead of runtime_env
+            all_args_to_update_environment_variables = [dict(env) for env in per_worker_env_vars]
+        else:
+            all_args_to_update_environment_variables = [{}] * len(worker_node_and_gpu_ids)
 
         # Environment variables to copy from driver to workers
         env_vars_to_copy = get_env_vars_to_copy(

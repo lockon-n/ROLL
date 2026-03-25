@@ -63,17 +63,25 @@ def init():
     platform_env = current_platform.get_custom_env_vars()
     os.environ.update(platform_env)
 
+    use_runtime_env = os.environ.get("ROLL_RAY_RUNTIME_ENV", "0") == "1"
+    if not use_runtime_env:
+        # Prevent Ray from overriding device visibility env vars for actors.
+        # Must be set before ray start / ray.init so raylet and all actors inherit it.
+        os.environ.setdefault(current_platform.ray_experimental_noset, "1")
+
     manual_start = start_ray_cluster()
 
+    ray_init_kwargs = build_ray_init_kwargs(
+        address=f"{master_addr}:{master_port}" if manual_start else None,
+        namespace=RAY_NAMESPACE,
+        ignore_reinit_error=True,
+        log_to_driver=not manual_start,
+    )
+    if use_runtime_env:
+        ray_init_kwargs["runtime_env"] = {"env_vars": platform_env}
+
     if not ray.is_initialized():
-        ray.init(
-            **build_ray_init_kwargs(
-                address=f"{master_addr}:{master_port}" if manual_start else None,
-                namespace=RAY_NAMESPACE,
-                ignore_reinit_error=True,
-                log_to_driver=not manual_start,
-            )
-        )
+        ray.init(**ray_init_kwargs)
         logger.info("Ray cluster initialized")
 
     if manual_start:

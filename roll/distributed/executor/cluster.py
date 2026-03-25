@@ -5,6 +5,7 @@ from typing import List, Type, Dict, Union, Any
 import ray
 from ray._private.async_compat import has_async_methods
 from ray._private.worker import RemoteFunctionNoArgs
+from ray.runtime_env import RuntimeEnv
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from roll.configs.worker_config import WorkerConfig
@@ -124,10 +125,18 @@ class Cluster:
             else:
                 # CPU-only workers
                 worker_name = f"{self.cluster_name}-{rank}"
+            use_runtime_env = os.environ.get("ROLL_RAY_RUNTIME_ENV", "0") == "1"
+
+            # New path: use LOCAL_RANK=actual_gpu_index so torch.cuda.set_device selects
+            # the correct physical GPU without relying on CUDA_VISIBLE_DEVICES.
+            # Old path: LOCAL_RANK=0 with CUDA_VISIBLE_DEVICES set via RuntimeEnv.
+            local_rank = 0 if use_runtime_env else (deploy_pg["gpu_rank"] if deploy_pg["gpu_rank"] is not None else 0)
+
             env_vars = {
+                **current_platform.get_custom_env_vars(),
                 "WORLD_SIZE": str(self.world_size),
                 "RANK": str(rank),
-                "LOCAL_RANK": str(0),
+                "LOCAL_RANK": str(local_rank),
                 "CLUSTER_NAME": self.cluster_name,
                 "WORKER_NAME": worker_name,
             }
@@ -142,7 +151,8 @@ class Cluster:
             env_vars.update(self.worker_config.system_envs)
 
             per_worker_config = copy.deepcopy(self.worker_config)
-            per_worker_config.system_envs.update(env_vars)
+            if not use_runtime_env:
+                per_worker_config.system_envs.update(env_vars)
             per_worker_config.resource_placement_groups = pgs
 
             if has_async_methods(self.worker_cls.__ray_metadata__.modified_class):
@@ -160,6 +170,9 @@ class Cluster:
                 "num_cpus": 0.01,
                 "max_concurrency": max_concurrency,
             }
+
+            if use_runtime_env:
+                worker_options["runtime_env"] = RuntimeEnv(env_vars=env_vars)
 
             if current_platform.ray_device_key == "GPU":
                 worker_options.update({"num_gpus": 0.01 if self.worker_config.device_mapping else 0})
