@@ -55,34 +55,57 @@ class EnvironmentWorker(Worker):
         model_name_or_path = download_model(self.worker_config.model_args.model_name_or_path)
         self.tokenizer = default_tokenizer_provider(self.worker_config.model_args, model_name_or_path)
         self.processor = default_processor_provider(self.worker_config.model_args, model_name_or_path)
-        def create_env_manager(env_id, env_config):
-            if env_id == 0:
-                self.logger.info(f"use env_manager_cls: {env_config['env_manager_cls']}")
-            env_manager_cls = safe_import_class(env_config["env_manager_cls"])
 
-            assert env_manager_cls is not None
-            tokenizer = copy.deepcopy(self.tokenizer)
-            processor = copy.deepcopy(self.processor)
-            extra_data_provider = None
-            if processor is not None and isinstance(processor, ProcessorMixin):
-                extra_data_provider = get_extra_data_provider(model_name_or_path, processor=processor)
-            return env_id, env_manager_cls(
-                worker_config=self.worker_config,
-                pipeline_config=pipeline_config,
-                env_config=env_config,
-                tokenizer=tokenizer,  # https://github.com/huggingface/tokenizers/issues/537
-                processor=processor,
-                generate_scheduler=generate_scheduler,
-                output_queue=output_queue,
-                thread_lock=self.thread_lock,
-                mode=mode,
-                extra_data_provider=extra_data_provider,
+        # Store context for lazy env_manager creation instead of creating all upfront
+        self._init_context = dict(
+            model_name_or_path=model_name_or_path,
+            pipeline_config=pipeline_config,
+            generate_scheduler=generate_scheduler,
+            output_queue=output_queue,
+            mode=mode,
+        )
+
+        max_concurrent = self.worker_config.max_env_num_per_worker
+        if max_concurrent and max_concurrent < len(self.env_configs):
+            # Lazy mode: only create env_managers on demand during run_rollout_loop
+            self.logger.info(
+                f"Lazy env init: {len(self.env_configs)} envs assigned, "
+                f"max {max_concurrent} concurrent (will create on demand)"
             )
-        with ThreadPoolExecutor(max_workers=min(len(self.env_configs), 64)) as executor:
-            futures = [
-                executor.submit(create_env_manager, env_id, env_config)
-                for env_id, env_config in self.env_configs.items()
-            ]
+        else:
+            # Eager mode: create all env_managers upfront (original behavior)
+            self._create_env_managers(list(self.env_configs.items()))
+
+    def _create_env_manager(self, env_id: int, env_config) -> BaseEnvManager:
+        ctx = self._init_context
+        if env_id == 0:
+            self.logger.info(f"use env_manager_cls: {env_config['env_manager_cls']}")
+        env_manager_cls = safe_import_class(env_config["env_manager_cls"])
+        assert env_manager_cls is not None
+        tokenizer = copy.deepcopy(self.tokenizer)
+        processor = copy.deepcopy(self.processor)
+        extra_data_provider = None
+        if processor is not None and isinstance(processor, ProcessorMixin):
+            extra_data_provider = get_extra_data_provider(ctx["model_name_or_path"], processor=processor)
+        return env_manager_cls(
+            worker_config=self.worker_config,
+            pipeline_config=ctx["pipeline_config"],
+            env_config=env_config,
+            tokenizer=tokenizer,
+            processor=processor,
+            generate_scheduler=ctx["generate_scheduler"],
+            output_queue=ctx["output_queue"],
+            thread_lock=self.thread_lock,
+            mode=ctx["mode"],
+            extra_data_provider=extra_data_provider,
+        )
+
+    def _create_env_managers(self, items: list):
+        """Create env_managers in parallel for a batch of (env_id, env_config) pairs."""
+        def _create(env_id, env_config):
+            return env_id, self._create_env_manager(env_id, env_config)
+        with ThreadPoolExecutor(max_workers=min(len(items), 64)) as executor:
+            futures = [executor.submit(_create, eid, ecfg) for eid, ecfg in items]
             for future in as_completed(futures):
                 try:
                     env_id, env_manager = future.result()
@@ -96,26 +119,47 @@ class EnvironmentWorker(Worker):
         # Set environment variables for profiler context
         os.environ["roll_EXEC_FUNC_NAME"] = "run_rollout_loop"
         os.environ["WORKER_NAME"] = f"EnvironmentWorker_{self.rank}"
-        
+
+        max_concurrent = self.worker_config.max_env_num_per_worker
+        is_lazy = max_concurrent and max_concurrent < len(self.env_configs)
+
+        if not is_lazy:
+            # Eager mode: all env_managers already created, run them all
+            await self._run_env_managers(self.env_managers, seed)
+        else:
+            # Lazy mode: process envs in batches, create/destroy per batch
+            env_items = list(self.env_configs.items())
+            for batch_start in range(0, len(env_items), max_concurrent):
+                batch = env_items[batch_start:batch_start + max_concurrent]
+                batch_managers = {}
+                for env_id, env_config in batch:
+                    if env_id in self.env_managers:
+                        batch_managers[env_id] = self.env_managers[env_id]
+                    else:
+                        batch_managers[env_id] = self._create_env_manager(env_id, env_config)
+                await self._run_env_managers(batch_managers, seed)
+                # Release env_managers not needed anymore to free memory
+                for env_id in batch_managers:
+                    self.env_managers.pop(env_id, None)
+
+    async def _run_env_managers(self, env_managers: dict, seed):
         loop = asyncio.get_event_loop()
-        max_concurrent = self.worker_config.max_env_num_per_worker or len(self.env_managers)
-        pool = ThreadPoolExecutor(max_workers=min(len(self.env_managers), max_concurrent))
-        
+        pool = ThreadPoolExecutor(max_workers=len(env_managers))
+
         def run_with_profiler(env_manager, data_proto):
             with local_profiler():
                 return env_manager.run_rollout_loop(data_proto)
-        
+
         def run_without_profiler(env_manager, data_proto):
             return env_manager.run_rollout_loop(data_proto)
-        
+
         tasks = []
-        for env_id, env_manager in self.env_managers.items():
-            # Only profile the first env_manager (env_id=0) on rank=0
+        for env_id, env_manager in env_managers.items():
             run_func = run_without_profiler
             if self.rank == 0 and env_id == 0:
                 run_func = run_with_profiler
             tasks.append(loop.run_in_executor(pool, run_func, env_manager, DataProto(meta_info={"seed": seed})))
-        
+
         await asyncio.gather(*tasks)
         pool.shutdown()
 
