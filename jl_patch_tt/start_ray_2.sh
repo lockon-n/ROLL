@@ -56,6 +56,7 @@ unset IFS
 fi
 
 node_addr=$BYTED_HOST_IP
+head_node_ip=
 
 if [[ $server_hosts =~ "]:" ]] ## Checks if the address is IPv6 format
 then
@@ -63,16 +64,40 @@ SERVER_IP=`echo $server_hosts | awk -F ']:' '{print $1}'`
 SERVER_IP+="]"
 SERVER_PORT=`echo $server_hosts | awk -F ']:' '{print $2}'`
 node_addr="[$MY_HOST_IPV6]" ## Set node address in IPv6 format
+head_node_ip=$SERVER_IP
 else
 IFS=':' SERVER_CONFIGS=($server_hosts)
 unset IFS
 SERVER_IP=${SERVER_CONFIGS[0]}
 SERVER_PORT=${SERVER_CONFIGS[1]}
+head_node_ip=$SERVER_IP
 fi
 
-echo $SERVER_IP
-echo $SERVER_PORT
-echo $node_addr
+# remove the [] in head_node_ip
+head_node_ip=${head_node_ip#"["}
+head_node_ip=${head_node_ip%""]}
+
+if [[ -n "$RAY_HEAD_IP_OVERRIDE" ]]; then
+  head_node_ip=$RAY_HEAD_IP_OVERRIDE
+  if [[ "$RAY_HEAD_IP_OVERRIDE" =~ ":" && ! "$RAY_HEAD_IP_OVERRIDE" =~ ^\[ ]]; then
+    SERVER_IP="[$RAY_HEAD_IP_OVERRIDE]"
+  else
+    SERVER_IP="$RAY_HEAD_IP_OVERRIDE"
+  fi
+fi
+
+if [[ -n "$RAY_LOCAL_IP_OVERRIDE" ]]; then
+  if [[ "$RAY_LOCAL_IP_OVERRIDE" =~ ":" && ! "$RAY_LOCAL_IP_OVERRIDE" =~ ^\[ ]]; then
+    node_addr="[$RAY_LOCAL_IP_OVERRIDE]"
+  else
+    node_addr="$RAY_LOCAL_IP_OVERRIDE"
+  fi
+fi
+
+echo "SERVER_IP: $SERVER_IP"
+echo "SERVER_PORT: $SERVER_PORT"
+echo "node_addr: $node_addr"
+echo "head_node_ip: $head_node_ip"
 
 ### setup ray
 HEAD_IP=$SERVER_IP
@@ -106,18 +131,17 @@ if [[ $role != "head" ]]; then
   echo "worker joined ray cluster"
 # 2. code for head
 else
-  echo "head executing: ulimit -n 65536; ray start --head --block --node-ip-address=${HEAD_IP} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm ${customized_resource}"
-  ray start --head  --node-ip-address=${HEAD_IP} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=0 --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm 
+  echo "head executing: ulimit -n 65536; ray start --head --block --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm ${customized_resource}"
+  ray start --head  --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=0 --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm 
   echo "ray head started"
 
   ray job submit --address=${HEAD_IP}:${HEAD_PORT} \
     --entrypoint-num-cpus=1 \
     --runtime-env-json='{
-         "working_dir": "'${WORKING_DIR}'",
          "env_vars": {
             "http_proxy": "",
             "https_proxy": ""
          }
       }' \
-    -- python YOUR_SCRIPT_HERE
+    -- python jl_patch_tt/test.sh
 fi
