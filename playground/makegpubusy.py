@@ -48,6 +48,12 @@ def parse_args():
         help="Optional sleep between iterations in seconds.",
     )
     parser.add_argument(
+        "--util",
+        type=float,
+        default=None,
+        help="Best-effort target GPU utilization percentage in (0, 100].",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -79,8 +85,26 @@ def make_buffers(torch_mod, device, dtype, size, buffers):
     return mats
 
 
+def sleep_for_target_util(busy_time_s, target_util):
+    if target_util is None or target_util >= 1.0:
+        return 0.0
+    return busy_time_s * ((1.0 / target_util) - 1.0)
+
+
 def main():
     args = parse_args()
+
+    if args.sleep < 0:
+        print("--sleep must be >= 0.", file=sys.stderr)
+        return 2
+
+    if args.util is not None and not (0.0 < args.util <= 100.0):
+        print("--util must be in the range (0, 100].", file=sys.stderr)
+        return 2
+
+    if args.util is not None and args.sleep > 0:
+        print("--util cannot be combined with --sleep.", file=sys.stderr)
+        return 2
 
     try:
         import torch
@@ -102,6 +126,7 @@ def main():
 
     device = torch.device(args.device)
     dtype = resolve_dtype(torch, args.dtype)
+    target_util = None if args.util is None else (args.util / 100.0)
 
     try:
         props = torch.cuda.get_device_properties(device)
@@ -115,6 +140,8 @@ def main():
         f"Starting GPU burner on {device} ({name}), "
         f"dtype={args.dtype}, size={args.size}, buffers={args.buffers}"
     )
+    if target_util is not None:
+        print(f"Target GPU utilization: {args.util:.1f}% (best-effort pacing)")
     if total_mem_gb:
         print(f"GPU total memory: {total_mem_gb:.2f} GiB")
 
@@ -138,18 +165,38 @@ def main():
     iteration = 0
     started_at = time.perf_counter()
     last_report_at = started_at
+    interval_busy_time = 0.0
+    pace_with_util = target_util is not None and target_util < 1.0
+    start_event = end_event = None
+
+    if pace_with_util:
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
     while not stop:
         a, b, c = matrices[iteration % len(matrices)]
-        torch.matmul(a, b, out=c)
+        if pace_with_util:
+            start_event.record()
+            torch.matmul(a, b, out=c)
+            end_event.record()
+            end_event.synchronize()
+            busy_time = start_event.elapsed_time(end_event) / 1000.0
+            interval_busy_time += busy_time
+        else:
+            torch.matmul(a, b, out=c)
         iteration += 1
 
-        if args.sleep > 0:
+        if pace_with_util:
+            sleep_time = sleep_for_target_util(busy_time, target_util)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        elif args.sleep > 0:
             torch.cuda.synchronize(device)
             time.sleep(args.sleep)
 
         if iteration % args.report_every == 0:
-            torch.cuda.synchronize(device)
+            if not pace_with_util:
+                torch.cuda.synchronize(device)
             now = time.perf_counter()
             elapsed = now - started_at
             interval = now - last_report_at
@@ -161,11 +208,16 @@ def main():
             )
             allocated_gb = torch.cuda.memory_allocated(device) / (1024 ** 3)
             reserved_gb = torch.cuda.memory_reserved(device) / (1024 ** 3)
-            print(
+            status = (
                 f"[{elapsed:9.1f}s] iter={iteration:8d} "
                 f"rate={it_per_sec:7.2f}/s approx={tflops:7.2f} TFLOPS "
                 f"mem={allocated_gb:6.2f}/{reserved_gb:6.2f} GiB"
             )
+            if pace_with_util:
+                actual_util = (100.0 * interval_busy_time / interval) if interval > 0 else 0.0
+                status += f" util={actual_util:5.1f}% target={args.util:5.1f}%"
+                interval_busy_time = 0.0
+            print(status)
             last_report_at = now
 
     torch.cuda.synchronize(device)
