@@ -98,7 +98,8 @@ class EnvironmentWorker(Worker):
         os.environ["WORKER_NAME"] = f"EnvironmentWorker_{self.rank}"
         
         loop = asyncio.get_event_loop()
-        pool = ThreadPoolExecutor(max_workers=len(self.env_managers))
+        max_concurrent = self.worker_config.max_env_num_per_worker or len(self.env_managers)
+        pool = ThreadPoolExecutor(max_workers=min(len(self.env_managers), max_concurrent))
         
         def run_with_profiler(env_manager, data_proto):
             with local_profiler():
