@@ -112,6 +112,21 @@ class VllmStrategy(InferenceStrategy):
             vllm_port = self.worker.get_free_port()
             os.environ["VLLM_PORT"] = str(vllm_port)
 
+        # In the new path (no runtime_env), CUDA_VISIBLE_DEVICES is not set by Ray.
+        # vLLM spawns EngineCore subprocesses that inherit os.environ and need
+        # CUDA_VISIBLE_DEVICES to know which GPU to use. Setting it here is safe:
+        # the current process CUDA context is already initialized (unaffected),
+        # but child subprocesses will inherit the correct device restriction.
+        # Use all GPUs on the same node from this worker's placement groups (for TP>1).
+        if os.environ.get("ROLL_RAY_RUNTIME_ENV", "0") != "1":
+            pgs = self.worker_config.resource_placement_groups
+            deploy_pg = pgs[0]
+            local_gpu_ranks = sorted(
+                pg["gpu_rank"] for pg in pgs
+                if pg["node_rank"] == deploy_pg["node_rank"] and pg["gpu_rank"] is not None
+            )
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, local_gpu_ranks))
+
         self.model = await create_async_llm(resource_placement_groups=self.worker_config.resource_placement_groups, **vllm_config)
 
 
