@@ -563,7 +563,7 @@ class RolloutScheduler(RolloutMockMixin):
         self.mode = mode
         self.collator = collator
 
-        env_num = self.env_manager_config.world_size * self.env_manager_config.max_env_num_per_worker
+        env_num = self.env_manager_config.world_size * self.env_manager_config._envs_per_worker
 
         self.env_output_queue = GroupQueueManager.options(
             name=f"GroupQueueManager-{mode}",

@@ -139,7 +139,18 @@ class EnvManagerConfig(WorkerConfig):
         metadata={"help": "The class of the worker."},
     )
     max_env_num_per_worker: int = field(
-        default=0, metadata={"help": "The maximum number of envs per worker. one env per thread."}
+        default=0, metadata={
+            "help": "Controls max concurrent envs (threads) per worker. "
+                    "When num_env_workers is not set, also determines worker count (total_envs / max_env_num_per_worker). "
+                    "When num_env_workers is set, only limits thread concurrency — excess envs are queued."
+        }
+    )
+    num_env_workers: int = field(
+        default=0, metadata={
+            "help": "Directly set the number of environment workers. "
+                    "Each worker is assigned ceil(total_envs / num_env_workers) envs. "
+                    "Use with max_env_num_per_worker to limit per-worker thread concurrency."
+        }
     )
     group_filter_cls: str = field(
         default="roll.pipeline.agentic.agentic_pipeline.GroupFilter",
@@ -150,14 +161,20 @@ class EnvManagerConfig(WorkerConfig):
         """
         根据es config计算world_size
         """
-        if self.max_env_num_per_worker <= 0:
-            self.max_env_num_per_worker = self.num_env_groups * self.final_group_size
-            logger.warning("all env in one worker by default, you can set max_env_num_per_worker to scale env.")
-        logger.info(f"max_env_num_per_worker: {self.max_env_num_per_worker}")
+        total_envs = self.num_env_groups * self.final_group_size
 
-        self.world_size = (
-            self.num_env_groups * self.final_group_size + self.max_env_num_per_worker - 1
-        ) // self.max_env_num_per_worker
+        if self.num_env_workers > 0:
+            self._envs_per_worker = (total_envs + self.num_env_workers - 1) // self.num_env_workers
+            if self.max_env_num_per_worker <= 0:
+                self.max_env_num_per_worker = self._envs_per_worker
+        else:
+            if self.max_env_num_per_worker <= 0:
+                self.max_env_num_per_worker = total_envs
+                logger.warning("all env in one worker by default, you can set max_env_num_per_worker or num_env_workers to scale env.")
+            self._envs_per_worker = self.max_env_num_per_worker
+
+        self.world_size = (total_envs + self._envs_per_worker - 1) // self._envs_per_worker
+        logger.info(f"env workers: {self.world_size}, envs_per_worker: {self._envs_per_worker}, max_concurrent_per_worker: {self.max_env_num_per_worker}")
         self.env_configs: Optional[Dict[int, Dict[int, Dict]]] = None
         """
         worker_rank: 
@@ -382,8 +399,8 @@ class AgenticConfig(PPOConfig):
             strategy_name = self.actor_infer.strategy_args.strategy_name
             assert strategy_name in ["vllm", "sglang"]
             max_concurrency = max(
-                self.train_env_manager.world_size * self.train_env_manager.max_env_num_per_worker + 1,
-                self.val_env_manager.world_size * self.val_env_manager.max_env_num_per_worker + 1,
+                self.train_env_manager.world_size * self.train_env_manager._envs_per_worker + 1,
+                self.val_env_manager.world_size * self.val_env_manager._envs_per_worker + 1,
             )
             self.actor_infer.max_concurrency = max(self.actor_infer.max_concurrency, max_concurrency)
             logger.info(f"Set max_concurrency of actor_infer to {self.actor_infer.max_concurrency}")
@@ -397,7 +414,7 @@ class AgenticConfig(PPOConfig):
         done_groups = 0
         env_manager_config.env_configs = {}
         group_seeds = {}
-        max_env_num_per_worker = env_manager_config.max_env_num_per_worker
+        envs_per_worker = env_manager_config._envs_per_worker
         for tag, n_group in zip(env_manager_config.tags, env_manager_config.num_groups_partition):
             for env_id in range(
                 done_groups * env_manager_config.final_group_size,
@@ -435,7 +452,7 @@ class AgenticConfig(PPOConfig):
                         "group_seed": group_seeds[group_id],
                     }
                 )
-                worker_rank = env_id // max_env_num_per_worker
+                worker_rank = env_id // envs_per_worker
                 env_configs[worker_rank][env_id] = DictConfig(entry)
                 logger.info(
                     f"[ENV CONFIG] tag: {tag}, group_id: {group_id}, group_seeds: {group_seeds[group_id]}, env_id: {env_id}"
