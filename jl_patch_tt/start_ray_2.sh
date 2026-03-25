@@ -134,10 +134,21 @@ else
   echo "head executing: ulimit -n 65536; ray start --head --block --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm ${customized_resource}"
   ray start --head  --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=0 --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm 
   echo "ray head started"
-
+  # exit 0
   ray job submit --address=${HEAD_IP}:${HEAD_PORT} \
     --entrypoint-num-cpus=1 \
     --runtime-env-json='{
+         "working_dir": "'${WORKING_DIR}'",
+         "excludes": [
+            "output",
+            "output/**",
+            "wandb",
+            "wandb/**",
+            "data",
+            "data/**",
+            "*.pdf",
+            "**/*.pdf"
+         ],
          "env_vars": {
             "http_proxy": "",
             "https_proxy": ""

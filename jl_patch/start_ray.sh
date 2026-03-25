@@ -37,8 +37,19 @@ else
                   --min-worker-port=0 \
                   --max-worker-port=0
 
-        # Build runtime env (customize as needed)
+        # Build runtime env
         RUNTIME_ENV_JSON="{
+        \"working_dir\": \".\",
+        \"excludes\": [
+            \"output\",
+            \"output/**\",
+            \"wandb\",
+            \"wandb/**\",
+            \"data\",
+            \"data/**\",
+            \"*.pdf\",
+            \"**/*.pdf\"
+        ],
         \"env_vars\": {
             \"VLLM_USE_V1\": \"$VLLM_USE_V1\"
         }
