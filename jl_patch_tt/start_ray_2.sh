@@ -94,6 +94,10 @@ if [[ -n "$RAY_LOCAL_IP_OVERRIDE" ]]; then
   fi
 fi
 
+# remove the [] in node_addr
+node_addr=${node_addr#"["}
+node_addr=${node_addr%""]}
+
 echo "SERVER_IP: $SERVER_IP"
 echo "SERVER_PORT: $SERVER_PORT"
 echo "node_addr: $node_addr"
@@ -127,12 +131,13 @@ if [[ $role != "head" ]]; then
   sleep 5s
   done
   echo "Using number of cpus: ${num_cpus}, number of gpus: ${num_gpus}, memory: ${memory}, object store memory: ${obj_store_mem}"
-  ray start --block --address=${HEAD_IP}:${HEAD_PORT} --node-ip-address=$node_addr --dashboard-agent-listen-port=$PORT0 --dashboard-agent-grpc-port=$PORT1 --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --node-name=$MY_POD_NAME 
+  echo "Will execute the command: ray start --block --address=${HEAD_IP}:${HEAD_PORT} --node-ip-address=$node_addr --dashboard-agent-listen-port=$PORT0 --dashboard-agent-grpc-port=$PORT1 --node-manager-port=$PORT2 --object-manager-port=$PORT3 --runtime-env-agent-port=$PORT4 --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --node-name=$MY_POD_NAME"
+  ray start --block --address=${HEAD_IP}:${HEAD_PORT} --node-ip-address=$node_addr --dashboard-agent-listen-port=$PORT0 --dashboard-agent-grpc-port=$PORT1 --node-manager-port=$PORT2 --object-manager-port=$PORT3 --runtime-env-agent-port=$PORT4 --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --node-name=$MY_POD_NAME
   echo "worker joined ray cluster"
 # 2. code for head
 else
-  echo "head executing: ulimit -n 65536; ray start --head --block --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm ${customized_resource}"
-  ray start --head  --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-name=$MY_POD_NAME --num-cpus=0 --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --min-worker-port=0 --max-worker-port=0 --plasma-directory=/dev/shm 
+  echo "head executing: ulimit -n 65536; ray start --head --block --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-manager-port=$PORT5 --object-manager-port=$PORT6 --runtime-env-agent-port=$PORT7 --node-name=$MY_POD_NAME --num-cpus=${num_cpus} --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --plasma-directory=/dev/shm ${customized_resource}"
+  ray start --head  --node-ip-address=${head_node_ip} --port=${HEAD_PORT} --dashboard-host='' --dashboard-port=$PORT1 --ray-client-server-port=$PORT2 --dashboard-agent-listen-port=$PORT3 --dashboard-agent-grpc-port=$PORT4 --node-manager-port=$PORT5 --object-manager-port=$PORT6 --runtime-env-agent-port=$PORT7 --node-name=$MY_POD_NAME --num-cpus=0 --num-gpus=${num_gpus} --memory=${memory} --object-store-memory=${obj_store_mem} --plasma-directory=/dev/shm
   echo "ray head started"
   # exit 0
   ray job submit --address=${HEAD_IP}:${HEAD_PORT} \
