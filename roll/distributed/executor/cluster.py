@@ -144,7 +144,9 @@ class Cluster:
             if rank != 0:
                 env_vars["MASTER_ADDR"] = self.master_addr
                 env_vars["MASTER_PORT"] = str(self.master_port)
-            if deploy_pg["gpu_rank"] is not None:
+            if deploy_pg["gpu_rank"] is not None and use_runtime_env:
+                # Old path: set CUDA_VISIBLE_DEVICES for RuntimeEnv to inject before process start.
+                # New path: skipped — uses LOCAL_RANK=actual_gpu_index instead.
                 current_platform.update_env_vars_for_visible_devices(env_vars=env_vars, gpu_ranks=pg_zero_gpu_ranks)
             if "ROLL_LOG_DIR" in os.environ:
                 env_vars["ROLL_LOG_DIR"] = os.environ["ROLL_LOG_DIR"]
