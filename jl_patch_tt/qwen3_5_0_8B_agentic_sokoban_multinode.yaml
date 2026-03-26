@@ -12,7 +12,7 @@ hydra:
 
 exp_name: "qwen3_5_0_8B_agentic_sokoban"
 
-base_output_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll/${exp_name}
+base_output_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}
 
 seed: 42
 logging_dir: ${base_output_dir}/logs
