@@ -11,14 +11,17 @@ hydra:
   output_subdir: null
 
 exp_name: "qwen3_5_0_8B_agentic_sokoban"
+
+base_output_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll/${exp_name}
+
 seed: 42
-logging_dir: ./output/logs/${exp_name}
-output_dir: ./output/${exp_name}
-render_save_dir: ./output/render/${exp_name}
+logging_dir: ${base_output_dir}/logs
+output_dir: ${base_output_dir}/output
+render_save_dir: ${base_output_dir}/render
 
 checkpoint_config:
   type: file_system
-  output_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll/${exp_name}
+  output_dir: ${base_output_dir}/checkpoints
 
 track_with: wandb
 tracker_kwargs:
