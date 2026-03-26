@@ -9,7 +9,7 @@ export RANK=$ARNOLD_ID
 export WORLD_SIZE=$ARNOLD_WORKER_NUM
 export WORKER_NUM=$ARNOLD_WORKER_NUM
 export MASTER_ADDR=[${ARNOLD_WORKER_0_HOST}]
-export MASTER_PORT=$(echo $ARNOLD_WORKER_0_PORT | cut -d',' -f1)
+# export MASTER_PORT=$(echo $ARNOLD_WORKER_0_PORT | cut -d',' -f1)
 
 echo "RANK: $RANK"
 echo "WORLD_SIZE: $WORLD_SIZE"
