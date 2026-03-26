@@ -176,5 +176,5 @@ else
             "https_proxy": ""
          }
       }' \
-    -- python jl_patch_tt/test.sh
+    -- bash jl_patch_tt/test.sh
 fi
