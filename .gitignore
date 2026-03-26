@@ -170,3 +170,12 @@ log
 
 output/
 .vscode/
+
+wandb/
+test/
+tests/
+test_*/
+test*.py
+debug/
+debug*
+debug_*/

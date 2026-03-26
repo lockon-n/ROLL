@@ -1,0 +1,9 @@
+custom_env:
+  Minecraft:
+    env_type: mcbots
+    max_steps: 100
+    max_tokens_per_step: 2048
+    env_manager_cls: roll.pipeline.agentic.env_manager.mcbots_env_manager.McbotsEnvManager
+    use_thread_lock: false
+    env_config:
+      tag: Minecraft
