@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from .platform import Platform
@@ -12,19 +14,37 @@ from ..utils.logging import get_logger
 
 logger = get_logger()
 
+PLATFORM_OVERRIDE_MAP: dict[str, type[Platform]] = {
+    "cuda": CudaPlatform,
+    "rocm": RocmPlatform,
+    "npu": NpuPlatform,
+    "cpu": CpuPlatform,
+}
+
 
 def _init_platform() -> Platform:
     """
     Detect and initialize the appropriate platform based on available devices.
 
+    Set ROLL_PLATFORM env var (cuda/rocm/npu/cpu) to override auto-detection.
+    This is useful when the driver runs on a CPU-only node but the cluster has GPUs.
+
     Priority:
-    1. CUDA (NVIDIA / AMD ROCm)
-    2. NPU (if torch_npu is installed)
-    3. CPU (fallback)
+    1. ROLL_PLATFORM env var override
+    2. CUDA (NVIDIA / AMD ROCm)
+    3. NPU (if torch_npu is installed)
+    4. CPU (fallback)
 
     Returns:
         An instance of a subclass of Platform corresponding to the detected hardware.
     """
+    override = os.environ.get("ROLL_PLATFORM", "").lower()
+    if override:
+        if override in PLATFORM_OVERRIDE_MAP:
+            logger.info(f"Platform overridden by ROLL_PLATFORM env var: {override}")
+            return PLATFORM_OVERRIDE_MAP[override]()
+        logger.warning(f"Unknown ROLL_PLATFORM value '{override}', falling back to auto-detection.")
+
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name().upper()
         logger.debug(f"Detected CUDA device: {device_name}")
