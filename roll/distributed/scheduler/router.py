@@ -949,6 +949,12 @@ class EnvAffinityRouter(Router):
             if src_rank not in self.src_rank2_dp_rank:
                 dp_rank = self._get_least_active_dp_rank()
                 self.src_rank2_dp_rank[src_rank] = dp_rank
+                if len(self.src_rank2_dp_rank) <= 20 or len(self.src_rank2_dp_rank) % 100 == 0:
+                    dp_counts = defaultdict(int)
+                    for dr in self.src_rank2_dp_rank.values():
+                        dp_counts[dr] += 1
+                    logger.info(f"[router] assigned env uid={src_rank} -> dp_rank={dp_rank}, "
+                                f"total_mappings={len(self.src_rank2_dp_rank)}, distribution={dict(dp_counts)}")
             dp_rank = self.src_rank2_dp_rank[src_rank]
 
         self.request_id_2_src_rank[request_id] = src_rank
