@@ -2,6 +2,7 @@
 
 import argparse
 import signal
+import subprocess
 import sys
 import time
 
@@ -60,11 +61,54 @@ def parse_args():
         help="Optional random seed.",
     )
     parser.add_argument(
+        "--adaptive",
+        action="store_true",
+        help="Adaptive mode: monitor real GPU utilization and fill the gap. "
+        "Must be combined with --util, which becomes the target *total* utilization. "
+        "When GPU is already busy from other work, this script backs off automatically.",
+    )
+    parser.add_argument(
         "--tf32",
         action="store_true",
         help="Allow TF32 on Ampere+ when using float32.",
     )
     return parser.parse_args()
+
+
+def _parse_device_index(device_str: str) -> int:
+    """Extract GPU index from a device string like 'cuda', 'cuda:0', 'cuda:3'."""
+    if ":" in device_str:
+        return int(device_str.split(":")[1])
+    return 0
+
+
+def _init_nvml_handle(device_index: int):
+    """Try to initialize pynvml and return a device handle, or None on failure."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        return pynvml.nvmlDeviceGetHandleByIndex(device_index), pynvml
+    except Exception:
+        return None, None
+
+
+def _query_util_nvml(handle, pynvml_mod) -> float:
+    """Query GPU utilization via pynvml. Returns 0-100."""
+    rates = pynvml_mod.nvmlDeviceGetUtilizationRates(handle)
+    return float(rates.gpu)
+
+
+def _query_util_smi(device_index: int) -> float:
+    """Fallback: query GPU utilization via nvidia-smi subprocess. Returns 0-100."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu",
+             "--format=csv,noheader,nounits", f"-i={device_index}"],
+            timeout=5, text=True,
+        )
+        return float(out.strip())
+    except Exception:
+        return 0.0
 
 
 def resolve_dtype(torch_mod, dtype_name):
@@ -100,6 +144,14 @@ def main():
 
     if args.util is not None and not (0.0 < args.util <= 100.0):
         print("--util must be in the range (0, 100].", file=sys.stderr)
+        return 2
+
+    if args.adaptive and args.util is None:
+        print("--adaptive requires --util to set target total utilization.", file=sys.stderr)
+        return 2
+
+    if args.adaptive and args.sleep > 0:
+        print("--adaptive cannot be combined with --sleep.", file=sys.stderr)
         return 2
 
     if args.util is not None and args.sleep > 0:
@@ -140,7 +192,9 @@ def main():
         f"Starting GPU burner on {device} ({name}), "
         f"dtype={args.dtype}, size={args.size}, buffers={args.buffers}"
     )
-    if target_util is not None:
+    if args.adaptive:
+        print(f"Adaptive mode: target total GPU utilization = {args.util:.1f}%")
+    elif target_util is not None:
         print(f"Target GPU utilization: {args.util:.1f}% (best-effort pacing)")
     if total_mem_gb:
         print(f"GPU total memory: {total_mem_gb:.2f} GiB")
@@ -166,14 +220,50 @@ def main():
     started_at = time.perf_counter()
     last_report_at = started_at
     interval_busy_time = 0.0
-    pace_with_util = target_util is not None and target_util < 1.0
+    pace_with_util = target_util is not None and target_util < 1.0 and not args.adaptive
     start_event = end_event = None
 
     if pace_with_util:
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
 
+    # --- Adaptive mode state ---
+    adaptive = args.adaptive
+    if adaptive:
+        device_index = _parse_device_index(args.device)
+        nvml_handle, pynvml_mod = _init_nvml_handle(device_index)
+        if nvml_handle is not None:
+            query_util = lambda: _query_util_nvml(nvml_handle, pynvml_mod)
+            print(f"Adaptive: using pynvml for utilization queries (device {device_index})")
+        else:
+            query_util = lambda: _query_util_smi(device_index)
+            print(f"Adaptive: using nvidia-smi fallback for utilization queries (device {device_index})")
+        adaptive_sleep = 0.0  # current sleep duration between iterations
+        last_sample_time = time.perf_counter()
+        sample_interval = 0.5  # query GPU util every 0.5s
+        last_gpu_util = query_util()
+
     while not stop:
+        # --- Adaptive: check if we should be idle ---
+        if adaptive:
+            now_t = time.perf_counter()
+            if now_t - last_sample_time >= sample_interval:
+                last_gpu_util = query_util()
+                last_sample_time = now_t
+                gap = last_gpu_util - args.util  # positive = GPU already busy enough
+                if gap > 10:
+                    # GPU is way over target, back off significantly
+                    adaptive_sleep = min(adaptive_sleep + 0.1, 2.0)
+                elif gap > 0:
+                    # Slightly over target, ease off gently
+                    adaptive_sleep = min(adaptive_sleep + 0.01, 2.0)
+                elif gap < -10:
+                    # GPU is well below target, ramp up quickly
+                    adaptive_sleep = max(adaptive_sleep - 0.05, 0.0)
+                else:
+                    # Slightly below target, ramp up gently
+                    adaptive_sleep = max(adaptive_sleep - 0.005, 0.0)
+
         a, b, c = matrices[iteration % len(matrices)]
         if pace_with_util:
             start_event.record()
@@ -186,7 +276,11 @@ def main():
             torch.matmul(a, b, out=c)
         iteration += 1
 
-        if pace_with_util:
+        if adaptive:
+            if adaptive_sleep > 0:
+                torch.cuda.synchronize(device)
+                time.sleep(adaptive_sleep)
+        elif pace_with_util:
             sleep_time = sleep_for_target_util(busy_time, target_util)
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -195,7 +289,7 @@ def main():
             time.sleep(args.sleep)
 
         if iteration % args.report_every == 0:
-            if not pace_with_util:
+            if not pace_with_util and not adaptive:
                 torch.cuda.synchronize(device)
             now = time.perf_counter()
             elapsed = now - started_at
@@ -213,7 +307,12 @@ def main():
                 f"rate={it_per_sec:7.2f}/s approx={tflops:7.2f} TFLOPS "
                 f"mem={allocated_gb:6.2f}/{reserved_gb:6.2f} GiB"
             )
-            if pace_with_util:
+            if adaptive:
+                status += (
+                    f" gpu_util={last_gpu_util:5.1f}% target={args.util:5.1f}%"
+                    f" sleep={adaptive_sleep:.3f}s"
+                )
+            elif pace_with_util:
                 actual_util = (100.0 * interval_busy_time / interval) if interval > 0 else 0.0
                 status += f" util={actual_util:5.1f}% target={args.util:5.1f}%"
                 interval_busy_time = 0.0
