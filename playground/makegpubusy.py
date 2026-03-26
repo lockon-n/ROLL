@@ -241,28 +241,24 @@ def main():
         adaptive_sleep = 0.0  # current sleep duration between iterations
         last_sample_time = time.perf_counter()
         sample_interval = 0.5  # query GPU util every 0.5s
-        last_gpu_util = query_util()
+        smoothed_util = float(query_util())  # EMA-smoothed utilization
+        last_gpu_util = smoothed_util
+        ema_alpha = 0.3  # weight for new samples (lower = smoother)
+        dead_zone = 3.0  # don't adjust if within ±3% of target
+        proportional_gain = 0.002  # sleep adjustment per 1% gap
 
     while not stop:
-        # --- Adaptive: check if we should be idle ---
+        # --- Adaptive: sample GPU util and adjust sleep ---
         if adaptive:
             now_t = time.perf_counter()
             if now_t - last_sample_time >= sample_interval:
-                last_gpu_util = query_util()
+                raw_util = query_util()
+                smoothed_util = ema_alpha * raw_util + (1.0 - ema_alpha) * smoothed_util
+                last_gpu_util = smoothed_util
                 last_sample_time = now_t
-                gap = last_gpu_util - args.util  # positive = GPU already busy enough
-                if gap > 10:
-                    # GPU is way over target, back off significantly
-                    adaptive_sleep = min(adaptive_sleep + 0.1, 2.0)
-                elif gap > 0:
-                    # Slightly over target, ease off gently
-                    adaptive_sleep = min(adaptive_sleep + 0.01, 2.0)
-                elif gap < -10:
-                    # GPU is well below target, ramp up quickly
-                    adaptive_sleep = max(adaptive_sleep - 0.05, 0.0)
-                else:
-                    # Slightly below target, ramp up gently
-                    adaptive_sleep = max(adaptive_sleep - 0.005, 0.0)
+                gap = smoothed_util - args.util
+                if abs(gap) > dead_zone:
+                    adaptive_sleep = max(min(adaptive_sleep + gap * proportional_gain, 2.0), 0.0)
 
         a, b, c = matrices[iteration % len(matrices)]
         if pace_with_util:
