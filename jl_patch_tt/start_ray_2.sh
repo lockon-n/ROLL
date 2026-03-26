@@ -1,5 +1,18 @@
 #!/bin/bash
 
+STRIP_BRACKETS=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strip-brackets)
+      STRIP_BRACKETS=true
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
 USER_ENV=`whoami`
 
 ### TODO: this is important for not using the head node to do CPU processing
@@ -73,9 +86,11 @@ SERVER_PORT=${SERVER_CONFIGS[1]}
 head_node_ip=$SERVER_IP
 fi
 
-# # remove the [] in head_node_ip
-# head_node_ip=${head_node_ip#"["}
-# head_node_ip=${head_node_ip%""]}
+# remove the [] in head_node_ip
+if [[ "$STRIP_BRACKETS" == "true" ]]; then
+  head_node_ip=${head_node_ip#"["}
+  head_node_ip=${head_node_ip%"]"}
+fi
 
 if [[ -n "$RAY_HEAD_IP_OVERRIDE" ]]; then
   head_node_ip=$RAY_HEAD_IP_OVERRIDE
@@ -94,9 +109,11 @@ if [[ -n "$RAY_LOCAL_IP_OVERRIDE" ]]; then
   fi
 fi
 
-# # remove the [] in node_addr
-# node_addr=${node_addr#"["}
-# node_addr=${node_addr%""]}
+# remove the [] in node_addr
+if [[ "$STRIP_BRACKETS" == "true" ]]; then
+  node_addr=${node_addr#"["}
+  node_addr=${node_addr%"]"}
+fi
 
 echo "SERVER_IP: $SERVER_IP"
 echo "SERVER_PORT: $SERVER_PORT"
