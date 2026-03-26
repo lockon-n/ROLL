@@ -324,7 +324,9 @@ class BaseConfig(ScheduleConfig):
         os.environ.update(self.system_envs)
 
         from ..platforms import current_platform
-        self.num_gpus_per_node = current_platform.device_count()
+        detected_gpus = current_platform.device_count()
+        if detected_gpus > 0:
+            self.num_gpus_per_node = detected_gpus
 
         # Auto-fallback: clamp device_mapping to available GPUs
         # self._clamp_device_mappings_to_available_gpus()
