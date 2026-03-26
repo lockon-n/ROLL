@@ -1,4 +1,6 @@
 import dataclasses
+import os
+import time
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
@@ -6,7 +8,10 @@ import ray
 from ray.util.placement_group import PlacementGroup
 
 from roll.platforms import current_platform
+from roll.utils.logging import get_logger
 from roll.utils.ray_utils import get_visible_gpus, get_node_rank
+
+logger = get_logger()
 
 
 class ResourceManager:
@@ -15,6 +20,33 @@ class ResourceManager:
             The ResourceManager centrally manages the required GPU/CPU resources,
             facilitating Ray to deploy Actors on specified GPU devices.
         """
+        # Wait for all expected nodes to join the Ray cluster
+        worker_num = os.environ.get("WORKER_NUM")
+        if worker_num is not None:
+            expected_nodes = int(worker_num) + 1  # workers + head
+            timeout = int(os.environ.get("ROLL_NODE_WAIT_TIMEOUT", "300"))
+            start_time = time.time()
+            while True:
+                ray_nodes = ray.nodes()
+                qualified = [
+                    n for n in ray_nodes
+                    if n["Alive"]
+                    and int(n["Resources"].get(current_platform.ray_device_key, 0)) >= num_gpus_per_node
+                ]
+                if len(qualified) >= expected_nodes:
+                    logger.info(f"All {expected_nodes} nodes are ready.")
+                    break
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    raise RuntimeError(
+                        f"Timeout waiting for nodes: expected {expected_nodes} nodes with >={num_gpus_per_node} GPUs, "
+                        f"but only {len(qualified)} qualified nodes joined after {timeout}s"
+                    )
+                logger.info(
+                    f"Waiting for nodes: {len(qualified)}/{expected_nodes} qualified nodes (elapsed {elapsed:.0f}s)"
+                )
+                time.sleep(5)
+
         available_resources = ray.available_resources()
         available_gpu = available_resources.get(current_platform.ray_device_key, 0)
 
