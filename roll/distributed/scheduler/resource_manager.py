@@ -23,7 +23,7 @@ class ResourceManager:
         # Wait for all expected nodes to join the Ray cluster
         worker_num = os.environ.get("WORKER_NUM")
         if worker_num is not None:
-            expected_nodes = int(worker_num) + 1  # workers + head
+            expected_nodes = int(worker_num)
             timeout = int(os.environ.get("ROLL_NODE_WAIT_TIMEOUT", "300"))
             start_time = time.time()
             while True:
