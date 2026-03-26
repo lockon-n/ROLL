@@ -15,9 +15,9 @@ exp_name: "qwen3_5_0_8B_agentic_sokoban"
 base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}
 
 seed: 42
-logging_dir: ./output/logs/${exp_name}
-output_dir: ./output/output/${exp_name}
-render_save_dir: ./output/render/${exp_name}
+logging_dir: ${base_ckpt_dir}/logs/${exp_name}
+output_dir: ${base_ckpt_dir}/output/${exp_name}
+render_save_dir: ${base_ckpt_dir}/render/${exp_name}
 
 checkpoint_config:
   type: file_system
