@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import os
+import resource
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Optional
@@ -41,6 +42,10 @@ class EnvironmentWorker(Worker):
         self.output_queue = None
         self.mode = "train"
 
+    def _get_rss_gb(self) -> float:
+        """Get current RSS in GB."""
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024**2
+
     @register(dispatch_mode=Dispatch.ONE_TO_ALL, clear_cache=False)
     async def initialize(self,
                    pipeline_config,
@@ -50,11 +55,15 @@ class EnvironmentWorker(Worker):
                    mode: str = "train"):
         super().initialize(pipeline_config)
 
+        self.logger.info(f"[mem] after super().initialize: RSS={self._get_rss_gb():.2f} GB")
+
         self.output_queue = output_queue
         self.mode = mode
         model_name_or_path = download_model(self.worker_config.model_args.model_name_or_path)
         self.tokenizer = default_tokenizer_provider(self.worker_config.model_args, model_name_or_path)
         self.processor = default_processor_provider(self.worker_config.model_args, model_name_or_path)
+
+        self.logger.info(f"[mem] after tokenizer/processor load: RSS={self._get_rss_gb():.2f} GB")
 
         # Store context for lazy env_manager creation instead of creating all upfront
         self._init_context = dict(
@@ -76,14 +85,17 @@ class EnvironmentWorker(Worker):
             # Eager mode: create all env_managers upfront (original behavior)
             self._create_env_managers(list(self.env_configs.items()))
 
+        self.logger.info(f"[mem] after env_managers created: RSS={self._get_rss_gb():.2f} GB, "
+                         f"num_env_managers={len(self.env_managers)}")
+
     def _create_env_manager(self, env_id: int, env_config) -> BaseEnvManager:
         ctx = self._init_context
         if env_id == 0:
             self.logger.info(f"use env_manager_cls: {env_config['env_manager_cls']}")
         env_manager_cls = safe_import_class(env_config["env_manager_cls"])
         assert env_manager_cls is not None
-        tokenizer = copy.deepcopy(self.tokenizer)
-        processor = copy.deepcopy(self.processor)
+        tokenizer = self.tokenizer
+        processor = self.processor
         extra_data_provider = None
         if processor is not None and isinstance(processor, ProcessorMixin):
             extra_data_provider = get_extra_data_provider(ctx["model_name_or_path"], processor=processor)
