@@ -52,7 +52,7 @@ whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-0.8B
+pretrain: hdfs://harunava/home/byte_malia_gcp_aiic/user/junlongli/models/Qwen/Qwen3.5-0.8B
 
 actor_train:
   model_args:
