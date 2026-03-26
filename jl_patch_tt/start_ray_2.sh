@@ -1,6 +1,7 @@
 #!/bin/bash
 
 STRIP_BRACKETS=false
+ENTRY_SCRIPT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --strip-brackets)
@@ -8,10 +9,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
+      if [[ -z "$ENTRY_SCRIPT" ]]; then
+        ENTRY_SCRIPT="$1"
+      fi
       shift
       ;;
   esac
 done
+# Default to jl_patch_tt/test.sh if no script argument provided
+ENTRY_SCRIPT="${ENTRY_SCRIPT:-jl_patch_tt/test.sh}"
 
 USER_ENV=`whoami`
 
@@ -176,5 +182,5 @@ else
             "https_proxy": ""
          }
       }' \
-    -- bash jl_patch_tt/test.sh
+    -- bash ${ENTRY_SCRIPT}
 fi
