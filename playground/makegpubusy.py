@@ -211,10 +211,18 @@ def main():
 
     matrices = make_buffers(torch, device, dtype, args.size, args.buffers)
 
+    warmup_event_s = torch.cuda.Event(enable_timing=True)
+    warmup_event_e = torch.cuda.Event(enable_timing=True)
+    warmup_times = []
     for i in range(args.warmup):
         a, b, c = matrices[i % len(matrices)]
+        warmup_event_s.record()
         torch.matmul(a, b, out=c)
-    torch.cuda.synchronize(device)
+        warmup_event_e.record()
+        warmup_event_e.synchronize()
+        warmup_times.append(warmup_event_s.elapsed_time(warmup_event_e) / 1000.0)
+    matmul_time = sum(warmup_times) / len(warmup_times) if warmup_times else 0.005
+    print(f"Measured matmul time: {matmul_time * 1000:.2f} ms")
 
     iteration = 0
     started_at = time.perf_counter()
@@ -238,17 +246,18 @@ def main():
         else:
             query_util = lambda: _query_util_smi(device_index)
             print(f"Adaptive: using nvidia-smi fallback for utilization queries (device {device_index})")
-        adaptive_sleep = 0.0  # current sleep duration between iterations
+        duty_cycle = 1.0  # fraction of time doing matmuls (0.05 ~ 1.0)
+        adaptive_sleep = 0.0
         last_sample_time = time.perf_counter()
-        sample_interval = 0.5  # query GPU util every 0.5s
-        smoothed_util = float(query_util())  # EMA-smoothed utilization
+        sample_interval = 1.0  # match nvidia's ~1s reporting window
+        smoothed_util = float(query_util())
         last_gpu_util = smoothed_util
-        ema_alpha = 0.3  # weight for new samples (lower = smoother)
-        dead_zone = 3.0  # don't adjust if within ±3% of target
-        proportional_gain = 0.002  # sleep adjustment per 1% gap
+        ema_alpha = 0.3
+        dead_zone = 3.0  # ±3% dead zone
+        duty_gain = 0.008  # duty cycle adjustment per 1% gap
 
     while not stop:
-        # --- Adaptive: sample GPU util and adjust sleep ---
+        # --- Adaptive: sample GPU util and adjust duty cycle ---
         if adaptive:
             now_t = time.perf_counter()
             if now_t - last_sample_time >= sample_interval:
@@ -256,9 +265,15 @@ def main():
                 smoothed_util = ema_alpha * raw_util + (1.0 - ema_alpha) * smoothed_util
                 last_gpu_util = smoothed_util
                 last_sample_time = now_t
-                gap = smoothed_util - args.util
+                gap = smoothed_util - args.util  # positive = too busy
                 if abs(gap) > dead_zone:
-                    adaptive_sleep = max(min(adaptive_sleep + gap * proportional_gain, 2.0), 0.0)
+                    # Decrease duty when over target, increase when under
+                    duty_cycle = max(min(duty_cycle - gap * duty_gain * 0.01, 1.0), 0.02)
+                # Convert duty cycle to sleep time
+                if duty_cycle < 1.0:
+                    adaptive_sleep = matmul_time * (1.0 / duty_cycle - 1.0)
+                else:
+                    adaptive_sleep = 0.0
 
         a, b, c = matrices[iteration % len(matrices)]
         if pace_with_util:
@@ -306,7 +321,7 @@ def main():
             if adaptive:
                 status += (
                     f" gpu_util={last_gpu_util:5.1f}% target={args.util:5.1f}%"
-                    f" sleep={adaptive_sleep:.3f}s"
+                    f" duty={duty_cycle:.1%}"
                 )
             elif pace_with_util:
                 actual_util = (100.0 * interval_busy_time / interval) if interval > 0 else 0.0
