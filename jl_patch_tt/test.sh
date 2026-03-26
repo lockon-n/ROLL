@@ -1,1 +1,2 @@
+hostname
 echo "hello world"
