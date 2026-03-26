@@ -73,9 +73,9 @@ SERVER_PORT=${SERVER_CONFIGS[1]}
 head_node_ip=$SERVER_IP
 fi
 
-# remove the [] in head_node_ip
-head_node_ip=${head_node_ip#"["}
-head_node_ip=${head_node_ip%""]}
+# # remove the [] in head_node_ip
+# head_node_ip=${head_node_ip#"["}
+# head_node_ip=${head_node_ip%""]}
 
 if [[ -n "$RAY_HEAD_IP_OVERRIDE" ]]; then
   head_node_ip=$RAY_HEAD_IP_OVERRIDE
@@ -94,9 +94,9 @@ if [[ -n "$RAY_LOCAL_IP_OVERRIDE" ]]; then
   fi
 fi
 
-# remove the [] in node_addr
-node_addr=${node_addr#"["}
-node_addr=${node_addr%""]}
+# # remove the [] in node_addr
+# node_addr=${node_addr#"["}
+# node_addr=${node_addr%""]}
 
 echo "SERVER_IP: $SERVER_IP"
 echo "SERVER_PORT: $SERVER_PORT"
