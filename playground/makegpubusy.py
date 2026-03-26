@@ -255,6 +255,8 @@ def main():
         ema_alpha = 0.3
         dead_zone = 3.0  # ±3% dead zone
         duty_gain = 0.008  # duty cycle adjustment per 1% gap
+        zero_since = None  # timestamp when util first dropped to ~0
+        emergency_threshold = 300.0  # 5 minutes
 
     while not stop:
         # --- Adaptive: sample GPU util and adjust duty cycle ---
@@ -266,14 +268,35 @@ def main():
                 last_gpu_util = smoothed_util
                 last_sample_time = now_t
                 gap = smoothed_util - args.util  # positive = too busy
+
+                # Emergency: if util ~0 for 5min, jump to target duty
+                if raw_util < 1.0:
+                    if zero_since is None:
+                        zero_since = now_t
+                    elif now_t - zero_since >= emergency_threshold:
+                        duty_cycle = args.util / 100.0
+                        zero_since = None
+                        print(f"[emergency] util=0 for {emergency_threshold:.0f}s, "
+                              f"resetting duty to {duty_cycle:.0%}")
+                else:
+                    zero_since = None
+
                 if abs(gap) > dead_zone:
                     # Decrease duty when over target, increase when under
-                    duty_cycle = max(min(duty_cycle - gap * duty_gain * 0.01, 1.0), 0.02)
+                    duty_cycle = max(min(duty_cycle - gap * duty_gain * 0.01, 1.0), 0.0)
                 # Convert duty cycle to sleep time
-                if duty_cycle < 1.0:
+                if duty_cycle <= 0.0:
+                    # GPU fully busy, pause and just keep checking
+                    adaptive_sleep = sample_interval
+                elif duty_cycle < 1.0:
                     adaptive_sleep = matmul_time * (1.0 / duty_cycle - 1.0)
                 else:
                     adaptive_sleep = 0.0
+
+            # Skip matmul entirely when duty is zero
+            if duty_cycle <= 0.0:
+                time.sleep(adaptive_sleep)
+                continue
 
         a, b, c = matrices[iteration % len(matrices)]
         if pace_with_util:
