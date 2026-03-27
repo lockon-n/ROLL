@@ -41,6 +41,7 @@ class EnvironmentWorker(Worker):
         self.thread_lock = threading.Lock()
         self.output_queue = None
         self.mode = "train"
+        self._global_step = -1
 
     def _get_rss_gb(self) -> float:
         """Get current RSS in GB."""
@@ -148,7 +149,10 @@ class EnvironmentWorker(Worker):
                     if env_id in self.env_managers:
                         batch_managers[env_id] = self.env_managers[env_id]
                     else:
-                        batch_managers[env_id] = self._create_env_manager(env_id, env_config)
+                        env_manager = self._create_env_manager(env_id, env_config)
+                        if self._global_step >= 0:
+                            env_manager.update_step(self._global_step)
+                        batch_managers[env_id] = env_manager
                 await self._run_env_managers(batch_managers, seed)
                 # Release env_managers not needed anymore to free memory
                 for env_id in batch_managers:
@@ -177,6 +181,7 @@ class EnvironmentWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL, clear_cache=False)
     async def update_step(self, global_step):
+        self._global_step = global_step
         for env_manager in self.env_managers.values():
             env_manager.update_step(global_step)
 
