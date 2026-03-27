@@ -15,9 +15,9 @@ exp_name: "qwen3_5_0_8B_agentic_sokoban"
 base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
 
 seed: 42
-logging_dir: ${base_ckpt_dir}/logs/${exp_name}
-output_dir: ${base_ckpt_dir}/output/${exp_name}
-render_save_dir: ${base_ckpt_dir}/render/${exp_name}
+logging_dir: /opt/tiger/entry/ROLL/output/logs/${exp_name}
+output_dir: /opt/tiger/entry/ROLL/output/${exp_name}
+render_save_dir: /opt/tiger/entry/ROLL/output/render/${exp_name}
 
 checkpoint_config:
   type: file_system
@@ -121,16 +121,16 @@ reward_normalization:
 
 train_env_manager:
   format_penalty: -0.15
-  # num_env_workers: 2
-  max_env_num_per_worker: 128
+  num_env_workers: 4
+  max_env_num_per_worker: 16
   num_env_groups: 128
   group_size: 8
   tags: [SimpleSokoban]
   num_groups_partition: [128]
 
 val_env_manager:
-  # num_env_workers: 2
-  max_env_num_per_worker: 256
+  num_env_workers: 4
+  max_env_num_per_worker: 16
   num_env_groups: 512
   group_size: 1
   tags: [SimpleSokoban, LargerSokoban, SokobanDifferentGridVocab, FrozenLake]
