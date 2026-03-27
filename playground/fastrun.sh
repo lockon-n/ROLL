@@ -1,1 +1,1 @@
-curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"Qwen3-VL-2B-Instruct","messages":[{"role":"user","content":"Hello, who are you?"}],"max_tokens":128,"stream":true}'
+curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"Qwen3-VL-2B-Instruct","messages":[{"role":"user","content":"Hello, who are you?"}],"max_tokens":128}'
