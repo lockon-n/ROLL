@@ -11,20 +11,23 @@ hydra:
   output_subdir: null
 
 exp_name: "qwen3_5_0_8B_agentic_sokoban"
+
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
+
 seed: 42
-logging_dir: ./output/logs/${exp_name}
-output_dir: ./output/${exp_name}
-render_save_dir: ./output/render/${exp_name}
+logging_dir: ${base_ckpt_dir}/logs/${exp_name}
+output_dir: ${base_ckpt_dir}/output/${exp_name}
+render_save_dir: ${base_ckpt_dir}/render/${exp_name}
 
 checkpoint_config:
   type: file_system
-  output_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll/${exp_name}
+  output_dir: ${base_ckpt_dir}/checkpoints
 
 track_with: wandb
 tracker_kwargs:
   project: qwen3_5_0_8B_agentic_sokoban
 
-num_gpus_per_node: 2
+num_gpus_per_node: 1
 
 chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
@@ -74,7 +77,7 @@ actor_train:
       use_distributed_optimizer: true
       recompute_granularity: full
       bf16: true
-  device_mapping: list(range(0,2))
+  device_mapping: list(range(0,1))
   infer_batch_size: 2
 
 actor_infer:
@@ -97,7 +100,7 @@ actor_infer:
       enable_prefix_caching: false
       limit_mm_per_prompt:
         image: ${max_actions_per_traj}
-  device_mapping: list(range(0,2))
+  device_mapping: list(range(0,1))
 
 reference:
   model_args:
@@ -109,7 +112,7 @@ reference:
   strategy_args:
     strategy_name: hf_infer
     strategy_config: ~
-  device_mapping: list(range(0,2))
+  device_mapping: list(range(0,1))
   infer_batch_size: 2
 
 reward_normalization:
