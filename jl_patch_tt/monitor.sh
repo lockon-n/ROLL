@@ -29,9 +29,9 @@ while true; do
     read TOTAL_CPU TOTAL_RSS TOTAL_VSZ PROC_COUNT <<< $(ps -u "$USER" -o pcpu,rss,vsz --no-headers 2>/dev/null | \
         awk '{cpu+=$1; rss+=$2; vsz+=$3; n++} END {printf "%.1f %.0f %.0f %d", cpu, rss, vsz, n}')
     tput el; echo "--- User Total (${PROC_COUNT} processes) ---"
-    CORES=$(echo "scale=1; $TOTAL_CPU / 100" | bc -l)
-    RSS_GB=$(echo "scale=1; $TOTAL_RSS / 1048576" | bc -l)
-    VSZ_GB=$(echo "scale=1; $TOTAL_VSZ / 1048576" | bc -l)
+    CORES=$(awk "BEGIN {printf \"%.1f\", $TOTAL_CPU / 100}")
+    RSS_GB=$(awk "BEGIN {printf \"%.1f\", $TOTAL_RSS / 1048576}")
+    VSZ_GB=$(awk "BEGIN {printf \"%.1f\", $TOTAL_VSZ / 1048576}")
     tput el; echo "  CPU: ${TOTAL_CPU}% (~${CORES} cores)    RSS: ${RSS_GB} GB    VSZ: ${VSZ_GB} GB"
     tput el; echo ""
 
@@ -41,7 +41,7 @@ while true; do
     tput el; echo "-----------------------------------------------"
     ps -u "$USER" -o pid,pcpu,rss,comm --no-headers --sort=-pcpu 2>/dev/null | head -15 | \
         while read PID CPU RSS COMM; do
-            RSS_GB=$(echo "scale=2; $RSS / 1048576" | bc -l)
+            RSS_GB=$(awk "BEGIN {printf \"%.2f\", $RSS / 1048576}")
             tput el
             echo "$PID  $CPU  $RSS_GB  $COMM"
         done
