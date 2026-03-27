@@ -52,7 +52,7 @@ whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3
+pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3-VL-2B-Instruct/
 
 actor_train:
   model_args:

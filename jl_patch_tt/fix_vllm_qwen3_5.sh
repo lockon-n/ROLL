@@ -12,7 +12,7 @@ fi
 
 if grep -q 'kwargs\["ignore_keys_at_rope_validation"\] = \[' "$TARGET"; then
     sed -i 's/kwargs\["ignore_keys_at_rope_validation"\] = \[/kwargs["ignore_keys_at_rope_validation"] = {/' "$TARGET"
-    sed -i '/kwargs\["ignore_keys_at_rope_validation"\] = {/{n;n;s/\]/}/}' "$TARGET"
+    sed -i 's/^\(\s*\)\]$/\1}/' "$TARGET"
     echo "Fixed: $TARGET"
     sed -n '/ignore_keys_at_rope_validation/,+3p' "$TARGET"
 else
