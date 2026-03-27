@@ -10,23 +10,26 @@ hydra:
     dir: .
   output_subdir: null
 
-exp_name: "qwen3_5_0_8B_agentic_sokoban"
+exp_name: "qwen3vl_2B_agentic_sokoban"
+
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
+
 seed: 42
-logging_dir: ./output/logs/${exp_name}
-output_dir: ./output/${exp_name}
-render_save_dir: ./output/render/${exp_name}
+logging_dir: ${base_ckpt_dir}/logs/${exp_name}
+output_dir: ${base_ckpt_dir}/output/${exp_name}
+render_save_dir: ${base_ckpt_dir}/render/${exp_name}
 
 checkpoint_config:
   type: file_system
-  output_dir: ../../ckpts/test_roll_singlenode/${exp_name}
+  output_dir: ${base_ckpt_dir}/checkpoints
 
 track_with: wandb
 tracker_kwargs:
-  project: qwen3_5_0_8B_agentic_sokoban
+  project: qwen3vl_2B_agentic_sokoban
 
-num_gpus_per_node: 8
+num_gpus_per_node: 1
 
-chat_template_file: ../../models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
+# chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
 max_steps: 1024
 save_steps: 10
@@ -49,7 +52,7 @@ whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /export/ssddata/junlong/models/Qwen/Qwen3.5-0.8B
+pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3
 
 actor_train:
   model_args:
@@ -118,6 +121,7 @@ reward_normalization:
 
 train_env_manager:
   format_penalty: -0.15
+  # num_env_workers: 2
   max_env_num_per_worker: 128
   num_env_groups: 128
   group_size: 8
@@ -125,6 +129,7 @@ train_env_manager:
   num_groups_partition: [128]
 
 val_env_manager:
+  # num_env_workers: 2
   max_env_num_per_worker: 256
   num_env_groups: 512
   group_size: 1

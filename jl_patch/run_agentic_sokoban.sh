@@ -9,7 +9,7 @@ unset VIRTUAL_ENV
 # Stop any residual Ray cluster to avoid stale GPU mappings
 /export/ssddata/junlong/projects/ROLL/.venv/bin/ray stop 2>/dev/null
 
-# ROLL_RAY_RUNTIME_ENV=1 \
+ROLL_RAY_RUNTIME_ENV=1 \
 WANDB_API_KEY=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 \
 TMPDIR=/export/ssddata/junlong/tmp \
 RAY_TMPDIR=/export/ssddata/junlong/tmp/ray \

@@ -52,7 +52,9 @@ def is_lora_training(pipeline_config: AgenticConfig) -> bool:
 
 class AgenticPipeline(BasePipeline):
     def __init__(self, pipeline_config: AgenticConfig):
+        _t0 = time.time()
         super().__init__(pipeline_config)
+        logger.info(f"[DIAG] BasePipeline.__init__ took {time.time() - _t0:.1f}s")
         self.pipeline_config: AgenticConfig
 
         self.pipeline_config.set_max_steps(max_steps=self.pipeline_config.max_steps)
@@ -118,8 +120,12 @@ class AgenticPipeline(BasePipeline):
             download_clusters.append(self.reward)
 
         # INIT PHASE: Download Models
+        _t1 = time.time()
         self.download_models(*download_clusters)
+        logger.info(f"[DIAG] download_models took {time.time() - _t1:.1f}s")
+        _t1 = time.time()
         self.tokenizer = default_tokenizer_provider(model_args=self.pipeline_config.actor_train.model_args)
+        logger.info(f"[DIAG] tokenizer load took {time.time() - _t1:.1f}s")
 
         if self.reward:
             # Create reward scheduler as Ray named actor for environment managers to access
@@ -167,23 +173,31 @@ class AgenticPipeline(BasePipeline):
                                                                 get_if_exists=True,
                                                                 namespace=RAY_NAMESPACE).remote()
         # INIT PHASE: Initialize Clusters
+        _t1 = time.time()
         refs: List[ray.ObjectRef] = []
         refs.extend(self.actor_train.initialize(pipeline_config=self.pipeline_config, blocking=False))
         if self.pipeline_config.adv_estimator == "gae":
             refs.extend(self.critic.initialize(pipeline_config=self.pipeline_config, blocking=False))
         ray.get(refs)
+        logger.info(f"[DIAG] actor_train (+critic) init took {time.time() - _t1:.1f}s")
 
+        _t1 = time.time()
         refs = []
         if self.reward:
             # INIT PHASE: Initialize Reward Cluster
             refs.extend(self.reward.initialize(pipeline_config=self.pipeline_config, blocking=False))
         refs.extend(self.actor_infer.initialize(pipeline_config=self.pipeline_config, blocking=False))
         ray.get(refs)
+        logger.info(f"[DIAG] actor_infer (+reward) init took {time.time() - _t1:.1f}s")
 
+        _t1 = time.time()
         if self.use_ref_model:
             refs.extend(self.reference.initialize(pipeline_config=self.pipeline_config, blocking=True))
+        logger.info(f"[DIAG] reference init took {time.time() - _t1:.1f}s")
 
+        _t1 = time.time()
         ray.get([self.train_rollout_scheduler.initialize.remote(), self.val_rollout_scheduler.initialize.remote()])
+        logger.info(f"[DIAG] rollout_scheduler init (envs) took {time.time() - _t1:.1f}s")
 
         # INIT PHASE: Setup Operations
         self.set_model_update_pair(
@@ -198,6 +212,7 @@ class AgenticPipeline(BasePipeline):
             self.set_checkpoint_clusters(self.actor_train)
 
         self.running = RunningMoments()
+        logger.info(f"[DIAG] === AgenticPipeline.__init__ TOTAL took {time.time() - _t0:.1f}s ===")
 
         # Validate partial GPU mode configuration and set self.partial_gpu_mode
         if self.pipeline_config.partial_gpu_mode:
@@ -214,6 +229,7 @@ class AgenticPipeline(BasePipeline):
             if global_step <= self.state.step:
                 global_step += 1
                 continue
+            _step_t0 = time.time()
             logger.info(f"pipeline rollout global step {global_step} start...")
             metrics = {}
 
@@ -289,6 +305,7 @@ class AgenticPipeline(BasePipeline):
 
                             dump_rollout_trajectories(self.pipeline_config.rollout_dump_dir, global_step, batch)
 
+                        logger.info(f"[DIAG] step {global_step} rollout get_batch took {rollout_timer.last:.1f}s (total since step start: {time.time() - _step_t0:.1f}s)")
                         metrics["time/step_rollout"] = rollout_timer.last
                         metrics.update(reduce_metrics(batch.meta_info.pop("metrics", {})))
                         batch.meta_info["global_step"] = global_step

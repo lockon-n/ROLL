@@ -55,6 +55,7 @@ def start_ray_cluster():
 
 
 def init():
+    _t0 = time.time()
     rank = get_driver_rank()
     world_size = get_driver_world_size()
     master_addr = get_driver_master_addr()
@@ -69,7 +70,9 @@ def init():
         # Must be set before ray start / ray.init so raylet and all actors inherit it.
         os.environ.setdefault(current_platform.ray_experimental_noset, "1")
 
+    _t1 = time.time()
     manual_start = start_ray_cluster()
+    logger.info(f"[DIAG] start_ray_cluster took {time.time() - _t1:.1f}s")
 
     ray_init_kwargs = build_ray_init_kwargs(
         address=f"{master_addr}:{master_port}" if manual_start else None,
@@ -81,15 +84,19 @@ def init():
         ray_init_kwargs["runtime_env"] = {"env_vars": platform_env}
 
     if not ray.is_initialized():
+        _t1 = time.time()
         ray.init(**ray_init_kwargs)
-        logger.info("Ray cluster initialized")
+        logger.info(f"[DIAG] ray.init took {time.time() - _t1:.1f}s")
 
     if manual_start:
+        _t1 = time.time()
         wait_for_nodes(expected=world_size)
+        logger.info(f"[DIAG] wait_for_nodes took {time.time() - _t1:.1f}s")
         listener = LogMonitorListener()
         listener.start()
 
     logger.info(f"Current ray cluster resources: {ray.available_resources()}")
+    logger.info(f"[DIAG] === init() TOTAL took {time.time() - _t0:.1f}s ===")
 
     if manual_start and rank > 0:
         sys.exit(0)
