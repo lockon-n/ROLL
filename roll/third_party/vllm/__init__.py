@@ -61,7 +61,10 @@ async def create_async_llm(resource_placement_groups: List[Dict], **kwargs):
     # here (only matters when VLLM_USE_RAY_SPMD_WORKER=0)
     current_platform.memory._set_allocator_settings("expandable_segments:False")
 
-    os.environ["VLLM_CACHE_ROOT"] = os.path.join(get_default_cache_root(), "vllm", os.environ.get("WORKER_NAME", ""))
+    # vLLM >= 0.12 and Triton >= 3.6 use atomic writes for compile cache,
+    # so workers can safely share a single cache directory without corruption.
+    # FlashInfer JIT cache still needs per-worker isolation to avoid conflicts.
+    os.environ["VLLM_CACHE_ROOT"] = os.path.join(get_default_cache_root(), "vllm")
 
     os.environ["FLASHINFER_WORKSPACE_BASE"] = os.path.join(
         pathlib.Path.home().as_posix(), ".cache", os.environ.get("WORKER_NAME", "")
