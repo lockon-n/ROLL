@@ -27,7 +27,7 @@ track_with: wandb
 tracker_kwargs:
   project: qwen3_5_0_8B_agentic_sokoban
 
-num_gpus_per_node: 1
+num_gpus_per_node: 4
 
 chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
@@ -77,7 +77,7 @@ actor_train:
       use_distributed_optimizer: true
       recompute_granularity: full
       bf16: true
-  device_mapping: list(range(0,1))
+  device_mapping: list(range(1,2))
   infer_batch_size: 2
 
 actor_infer:
@@ -100,7 +100,7 @@ actor_infer:
       enable_prefix_caching: false
       limit_mm_per_prompt:
         image: ${max_actions_per_traj}
-  device_mapping: list(range(0,1))
+  device_mapping: list(range(1,2))
 
 reference:
   model_args:
@@ -112,7 +112,7 @@ reference:
   strategy_args:
     strategy_name: hf_infer
     strategy_config: ~
-  device_mapping: list(range(0,1))
+  device_mapping: list(range(1,2))
   infer_batch_size: 2
 
 reward_normalization:
@@ -122,7 +122,7 @@ reward_normalization:
 train_env_manager:
   format_penalty: -0.15
   num_env_workers: 4
-  max_env_num_per_worker: 16
+  max_env_num_per_worker: 128
   num_env_groups: 128
   group_size: 8
   tags: [SimpleSokoban]
@@ -130,7 +130,7 @@ train_env_manager:
 
 val_env_manager:
   num_env_workers: 4
-  max_env_num_per_worker: 16
+  max_env_num_per_worker: 128
   num_env_groups: 512
   group_size: 1
   tags: [SimpleSokoban, LargerSokoban, SokobanDifferentGridVocab, FrozenLake]
