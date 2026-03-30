@@ -325,7 +325,7 @@ class BaseConfig(ScheduleConfig):
 
         from ..platforms import current_platform
         detected_gpus = current_platform.device_count()
-        if detected_gpus > 0:
+        if detected_gpus > 0 and current_platform.device_type != "cpu":
             self.num_gpus_per_node = detected_gpus
 
         # Auto-fallback: clamp device_mapping to available GPUs
