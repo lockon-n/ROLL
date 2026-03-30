@@ -42,6 +42,7 @@ class EnvironmentWorker(Worker):
         self.output_queue = None
         self.mode = "train"
         self._global_step = -1
+        self._stopped = False
 
     def _get_rss_gb(self) -> float:
         """Get current RSS in GB."""
@@ -140,23 +141,8 @@ class EnvironmentWorker(Worker):
             # Eager mode: all env_managers already created, run them all
             await self._run_env_managers(self.env_managers, seed)
         else:
-            # Lazy mode: process envs in batches, create/destroy per batch
-            env_items = list(self.env_configs.items())
-            for batch_start in range(0, len(env_items), max_concurrent):
-                batch = env_items[batch_start:batch_start + max_concurrent]
-                batch_managers = {}
-                for env_id, env_config in batch:
-                    if env_id in self.env_managers:
-                        batch_managers[env_id] = self.env_managers[env_id]
-                    else:
-                        env_manager = self._create_env_manager(env_id, env_config)
-                        if self._global_step >= 0:
-                            env_manager.update_step(self._global_step)
-                        batch_managers[env_id] = env_manager
-                await self._run_env_managers(batch_managers, seed)
-                # Release env_managers not needed anymore to free memory
-                for env_id in batch_managers:
-                    self.env_managers.pop(env_id, None)
+            # Streaming lazy mode: semaphore-based concurrency, one-in-one-out
+            await self._run_env_managers_streaming(list(self.env_configs.items()), max_concurrent, seed)
 
     async def _run_env_managers(self, env_managers: dict, seed):
         loop = asyncio.get_event_loop()
@@ -179,13 +165,51 @@ class EnvironmentWorker(Worker):
         await asyncio.gather(*tasks)
         pool.shutdown()
 
+    async def _run_env_managers_streaming(self, env_items: list, max_concurrent: int, seed):
+        """Streaming lazy mode: semaphore-based concurrency, one-in-one-out.
+
+        Instead of processing envs in fixed batches (wait for entire batch to finish),
+        this uses a semaphore to maintain exactly `max_concurrent` envs running at any time.
+        When one env finishes, the next one starts immediately.
+        """
+        semaphore = asyncio.Semaphore(max_concurrent)
+        loop = asyncio.get_event_loop()
+        pool = ThreadPoolExecutor(max_workers=max_concurrent)
+
+        def create_and_run(env_id: int, env_config, use_profiler: bool):
+            env_manager = self._create_env_manager(env_id, env_config)
+            if self._global_step >= 0:
+                env_manager.update_step(self._global_step)
+            self.env_managers[env_id] = env_manager
+            data = DataProto(meta_info={"seed": seed})
+            try:
+                if use_profiler:
+                    with local_profiler():
+                        env_manager.run_rollout_loop(data)
+                else:
+                    env_manager.run_rollout_loop(data)
+            finally:
+                self.env_managers.pop(env_id, None)
+
+        async def run_single_env(env_id: int, env_config):
+            async with semaphore:
+                if self._stopped:
+                    return
+                use_profiler = (self.rank == 0 and env_id == 0)
+                await loop.run_in_executor(pool, create_and_run, env_id, env_config, use_profiler)
+
+        tasks = [run_single_env(env_id, env_config) for env_id, env_config in env_items]
+        await asyncio.gather(*tasks)
+        pool.shutdown()
+
     @register(dispatch_mode=Dispatch.ONE_TO_ALL, clear_cache=False)
     async def update_step(self, global_step):
         self._global_step = global_step
-        for env_manager in self.env_managers.values():
+        for env_manager in list(self.env_managers.values()):
             env_manager.update_step(global_step)
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL, clear_cache=False)
     async def stop(self):
-        for env_manager in self.env_managers.values():
+        self._stopped = True
+        for env_manager in list(self.env_managers.values()):
             env_manager.stop()
