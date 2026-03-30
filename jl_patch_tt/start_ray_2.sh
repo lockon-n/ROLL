@@ -59,7 +59,8 @@ else
   if [[ -n "$WORKER_OBJECT_STORE_MEM" ]]; then
     obj_store_mem=$(($WORKER_OBJECT_STORE_MEM * 1024 ** 3))
   else
-    obj_store_mem=$((8 * 1024 ** 3))
+    # Default to 40% of worker memory quota (memory_tmp is in MB)
+    obj_store_mem=$((memory_tmp * 1024 * 1024 * 40 / 100))
   fi
 fi
 if [[ "$obj_store_mem" -gt "$obj_store_mem_limit" ]]; then 
