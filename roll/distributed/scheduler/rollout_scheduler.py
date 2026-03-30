@@ -64,14 +64,18 @@ class EnvActivityMonitor:
             env_id: Environment ID
             episode_id: Episode ID assigned to this env
         """
+        env_key = (group_id, env_id)
+
+        # Always track current episode (needed for dead worker cleanup regardless of monitoring)
+        old_episode_id = self.env_current_episode.get(env_key)
+        self.env_current_episode[env_key] = episode_id
+
         if not self.enable:
             return
 
-        env_key = (group_id, env_id)
         episode_key = ((group_id, env_id), episode_id)
 
         # Automatic cleanup: Remove old episode records for this env
-        old_episode_id = self.env_current_episode.get(env_key)
         if old_episode_id is not None and old_episode_id != episode_id:
             old_episode_key = ((group_id, env_id), old_episode_id)
             self.env_episode_start.pop(old_episode_key, None)
@@ -79,7 +83,6 @@ class EnvActivityMonitor:
 
         # Record new episode start time
         self.env_episode_start[episode_key] = time.time()
-        self.env_current_episode[env_key] = episode_id
 
     def record_activity(self, group_id: int, env_id: int, episode_id: int, rollout: Optional[DataProto]):
         """
@@ -92,17 +95,21 @@ class EnvActivityMonitor:
             episode_id: Episode ID
             rollout: Rollout data (None means env is exiting)
         """
+        env_key = (group_id, env_id)
+
+        if rollout is None:
+            # Always clean up current episode tracking (needed for dead worker cleanup)
+            self.env_current_episode.pop(env_key, None)
+
         if not self.enable:
             return
 
-        env_key = (group_id, env_id)
         episode_key = ((group_id, env_id), episode_id)
 
         if rollout is None:
             # Env calls put(..., None) to signal exit, remove all tracking
             self.env_episode_start.pop(episode_key, None)
             self.env_episode_submit.pop(episode_key, None)
-            self.env_current_episode.pop(env_key, None)
             return
 
         # Normal rollout submission, record submit time
@@ -479,6 +486,28 @@ class GroupQueueManager:
         self.waiting -= 1
         self.total += 1
 
+    def release_dead_worker(self, rank: int):
+        """Submit None for episodes claimed by a dead worker's envs to unblock GroupQueues.
+
+        When a worker dies, its envs may have called get_episode_id() (incrementing
+        running_rollouts) but never called put(). This leaves the group stuck waiting
+        for rollouts that will never arrive. This method submits None for each such
+        orphaned claim, allowing the group to complete with fewer real rollouts.
+        """
+        rank_env_configs = self.env_manager_config.env_configs.get(rank, {})
+        released = 0
+        for env_id, env_config in rank_env_configs.items():
+            group_id = env_config["group_id"]
+            env_key = (group_id, env_id)
+            claimed_episode = self.env_monitor.env_current_episode.get(env_key)
+            if claimed_episode is not None and group_id in self.group_queue:
+                gq = self.group_queue[group_id]
+                if claimed_episode in gq.groups:
+                    self.put(group_id, claimed_episode, gq.groups[claimed_episode].create_step, None, env_id)
+                    released += 1
+        if released > 0:
+            logger.info(f"[RolloutScheduler] Released {released} orphaned episodes for dead worker rank {rank}")
+
     async def get_batch(self, batch_size, current_step) -> List[DataProto]:
         """
         return completed rollouts group by group_id with least start_step
@@ -629,7 +658,52 @@ class RolloutScheduler(RolloutMockMixin):
         await self.router_manager.wait_complete.remote()
 
     async def _run_rollout_loop(self, seed):
-        await asyncio.gather(*self.es_manager.run_rollout_loop(seed, blocking=False))
+        max_retries = self.env_manager_config.max_restarts
+        if max_retries <= 0:
+            await asyncio.gather(*self.es_manager.run_rollout_loop(seed, blocking=False))
+            return
+
+        # Per-worker monitoring with retry on failure
+        tasks = [
+            asyncio.create_task(self._run_worker_with_retry(worker, rank, seed, max_retries))
+            for rank, worker in enumerate(self.es_manager.workers)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        failures = [(rank, r) for rank, r in enumerate(results) if isinstance(r, Exception)]
+        if failures:
+            for rank, exc in failures:
+                logger.error(f"EnvironmentWorker rank {rank} permanently failed: {exc}")
+        if len(failures) == len(results):
+            raise RuntimeError(f"All {len(results)} environment workers failed permanently")
+
+    async def _run_worker_with_retry(self, worker, rank: int, seed, max_retries: int):
+        for attempt in range(max_retries + 1):
+            try:
+                await worker.run_rollout_loop.remote(seed)
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(
+                        f"EnvironmentWorker rank {rank} failed (attempt {attempt + 1}/{max_retries}), "
+                        f"will restart: {e}"
+                    )
+                    await self.env_output_queue.release_dead_worker.remote(rank)
+                    await asyncio.sleep(1)
+                    await worker.initialize.remote(
+                        pipeline_config=self.config,
+                        generate_scheduler=self.router_manager,
+                        output_queue=self.env_output_queue,
+                        collator=self.collator,
+                        mode=self.mode,
+                    )
+                else:
+                    logger.error(
+                        f"EnvironmentWorker rank {rank} failed permanently "
+                        f"after {max_retries} retries: {e}"
+                    )
+                    await self.env_output_queue.release_dead_worker.remote(rank)
+                    raise
 
     async def _get_batch(self, batch_size, global_step):
         return await self.env_output_queue.get_batch.remote(batch_size, global_step)

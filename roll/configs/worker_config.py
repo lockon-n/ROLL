@@ -136,6 +136,7 @@ class WorkerConfig:
         metadata={"help": "Weight for negative samples in TOPR loss."},
     )
     max_concurrency: int = field(default=1, metadata={"help": "max_concurrency of this Ray Actor"})
+    max_restarts: int = field(default=0, metadata={"help": "Max actor restart attempts on failure. 0 means no restarts."})
 
     use_dynamic_batching_in_train: bool = field(
         default=False,

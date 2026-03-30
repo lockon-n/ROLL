@@ -173,6 +173,9 @@ class Cluster:
                 "max_concurrency": max_concurrency,
             }
 
+            if self.worker_config.max_restarts > 0:
+                worker_options["max_restarts"] = self.worker_config.max_restarts
+
             if use_runtime_env:
                 worker_options["runtime_env"] = RuntimeEnv(env_vars=env_vars)
 

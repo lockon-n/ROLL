@@ -62,13 +62,11 @@ async def create_async_llm(resource_placement_groups: List[Dict], **kwargs):
     current_platform.memory._set_allocator_settings("expandable_segments:False")
 
     # vLLM >= 0.12 and Triton >= 3.6 use atomic writes for compile cache,
-    # so workers can safely share a single cache directory without corruption.
-    # FlashInfer JIT cache still needs per-worker isolation to avoid conflicts.
+    # FlashInfer uses FileLock for JIT cache (safe on local filesystems).
+    # Workers can share a single cache directory without corruption.
     os.environ["VLLM_CACHE_ROOT"] = os.path.join(get_default_cache_root(), "vllm")
 
-    os.environ["FLASHINFER_WORKSPACE_BASE"] = os.path.join(
-        pathlib.Path.home().as_posix(), ".cache", os.environ.get("WORKER_NAME", "")
-    )
+    os.environ["FLASHINFER_WORKSPACE_BASE"] = pathlib.Path.home().as_posix()
 
     # Default fork method is not compatible with Roll.
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
