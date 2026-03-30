@@ -24,6 +24,7 @@ class BaseEnvManager:
     def __init__(self, *args, **kwargs):
         self.current_step = -1
         self.running = False
+        self.non_blocking = False
         self.env: gem.Env
 
     @abstractmethod

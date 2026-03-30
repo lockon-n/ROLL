@@ -285,15 +285,17 @@ class GroupQueue:
         self._advance_step(step)
         self.progress.set()
 
-    async def get_episode_id(self, env_id: Optional[int] = None) -> Optional[int]:
+    async def get_episode_id(self, env_id: Optional[int] = None, blocking: bool = True) -> Optional[int]:
         """
         Get the next episode_id for an env to process.
 
         Args:
             env_id: Environment ID requesting work (None for backward compatibility)
+            blocking: If True (default), block until an episode is available.
+                      If False, return None immediately when no episodes are available.
 
         Returns:
-            episode_id to process, or None if shutting down
+            episode_id to process, or None if shutting down / no episodes available (non-blocking)
         """
         while not self.quit:
             # iterate over groups in order
@@ -306,6 +308,8 @@ class GroupQueue:
                         self.env_monitor.record_episode_start(self.group_id, env_id, episode_id)
 
                     return episode_id
+            if not blocking:
+                return None
             if self.max_traj_per_env is None:
                 while self.current_step is None:
                     self.progress.clear()
@@ -424,19 +428,20 @@ class GroupQueueManager:
         for group_queue in self.group_queue.values():
             group_queue.advance_step(step)
 
-    async def get_episode_id(self, group_id, env_id=None):
+    async def get_episode_id(self, group_id, env_id=None, blocking=True):
         """
         Get the next episode ID for an environment.
 
         Args:
             group_id: Group ID
             env_id: Environment ID (for hang detection tracking)
+            blocking: If True (default), block until available. If False, return None immediately.
 
         Returns:
-            episode_id to process
+            episode_id to process, or None if shutting down / no episodes (non-blocking)
         """
         assert group_id in self.group_queue
-        return await self.group_queue[group_id].get_episode_id(env_id)
+        return await self.group_queue[group_id].get_episode_id(env_id, blocking=blocking)
 
     def shutdown(self):
         # Stop monitoring task

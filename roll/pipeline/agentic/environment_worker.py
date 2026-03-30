@@ -178,6 +178,7 @@ class EnvironmentWorker(Worker):
 
         def create_and_run(env_id: int, env_config, use_profiler: bool):
             env_manager = self._create_env_manager(env_id, env_config)
+            env_manager.non_blocking = True
             if self._global_step >= 0:
                 env_manager.update_step(self._global_step)
             self.env_managers[env_id] = env_manager

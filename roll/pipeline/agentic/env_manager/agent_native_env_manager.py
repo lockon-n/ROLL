@@ -103,10 +103,10 @@ class AgentNativeStepEnvManager(TrajEnvManager):
 
         self.episode_id = ray.get(self.output_queue.get_episode_id.remote(
             self.env_config['group_id'],
-            self.env_config['env_id']
+            self.env_config['env_id'],
+            blocking=not self.non_blocking
         ))
         if self.episode_id is None:
-            assert not self.running
             return None
 
         seed = self.group_seed + self.episode_id
