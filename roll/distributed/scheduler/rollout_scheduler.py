@@ -641,7 +641,10 @@ class RolloutScheduler(RolloutMockMixin):
         if self._should_load_mock(global_step):
             return await self._load_mock_batch(global_step)
 
-        # start env manager
+        # In streaming lazy mode, env_managers exit after exhausting episodes (non_blocking),
+        # so rollout_task completes between steps. Reset it so a new loop is created.
+        if self.rollout_task is not None and self.rollout_task.done():
+            self.rollout_task = None
         if self.rollout_task is None:
             seed = random.randint(0, 1000000) if self.mode == "train" else self.config.seed
             self.rollout_task = asyncio.create_task(self._run_rollout_loop(seed))
