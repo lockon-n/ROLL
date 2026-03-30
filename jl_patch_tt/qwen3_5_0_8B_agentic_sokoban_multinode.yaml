@@ -121,7 +121,7 @@ reward_normalization:
 
 train_env_manager:
   format_penalty: -0.15
-  num_env_workers: 4
+  num_env_workers: 2
   max_env_num_per_worker: 64
   num_env_groups: 128
   group_size: 8
@@ -129,7 +129,7 @@ train_env_manager:
   num_groups_partition: [128]
 
 val_env_manager:
-  num_env_workers: 4
+  num_env_workers: 2
   max_env_num_per_worker: 64
   num_env_groups: 512
   group_size: 1
