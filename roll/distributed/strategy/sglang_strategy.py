@@ -332,8 +332,7 @@ class SglangEngine:
     async def initialize(self, sglang_config):
         os.environ["SGLANG_BLOCK_NONZERO_RANK_CHILDREN"] = "0"
         os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
-        os.environ["FLASHINFER_WORKSPACE_BASE"] = os.path.join(
-            pathlib.Path.home().as_posix(), ".cache", os.environ.get("WORKER_NAME", ""))
+        os.environ["FLASHINFER_WORKSPACE_BASE"] = pathlib.Path.home().as_posix()
         self.engine = sglang_patch.engine.engine_module.Engine(**sglang_config)
         self.engine.tokenizer_manager.auto_create_handle_loop() # some rpc of tokenizer_manager will not create handle_loop automatically
 
@@ -411,8 +410,7 @@ class SglangHttpEngine:
 
     async def initialize(self, sglang_config):
         os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
-        os.environ["FLASHINFER_WORKSPACE_BASE"] = os.path.join(
-            pathlib.Path.home().as_posix(), ".cache", os.environ.get("WORKER_NAME", ""))
+        os.environ["FLASHINFER_WORKSPACE_BASE"] = pathlib.Path.home().as_posix()
         import multiprocessing
 
         multiprocessing.set_start_method("spawn")
@@ -485,8 +483,7 @@ class SglangGrpcEngine:
 
     async def initialize(self, sglang_config):
         os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
-        os.environ["FLASHINFER_WORKSPACE_BASE"] = os.path.join(
-            pathlib.Path.home().as_posix(), ".cache", os.environ.get("WORKER_NAME", ""))
+        os.environ["FLASHINFER_WORKSPACE_BASE"] = pathlib.Path.home().as_posix()
         import multiprocessing
         from sglang.srt.grpc import sglang_scheduler_pb2_grpc
 
