@@ -378,6 +378,7 @@ class BaseConfig(ScheduleConfig):
                     total_devices.extend(attribute.device_mapping)
         if len(total_devices) > 0:
             max_gpu_num = max(total_devices) + 1
+            logger.info(f"DEBUG: num_gpus_per_node={self.num_gpus_per_node}, max_gpu_num={max_gpu_num}, detected_gpus={detected_gpus}")
             if max_gpu_num <= self.num_gpus_per_node:
                 self.num_nodes = 1
             else:
