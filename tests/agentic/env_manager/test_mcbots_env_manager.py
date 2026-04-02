@@ -691,14 +691,14 @@ class TestPortFile:
 
     def test_write_and_read_port_file(self):
         self.mgr._write_port_file()
-        port_file = os.path.join(self.test_port_dir, f"{self.mgr.env_id}.port")
+        port_file = os.path.join(self.test_port_dir, f"roll_{self.mgr.env_id}.port")
         assert os.path.exists(port_file)
         with open(port_file) as f:
             assert f.read() == "12345"
 
     def test_cleanup_port_file(self):
         self.mgr._write_port_file()
-        port_file = os.path.join(self.test_port_dir, f"{self.mgr.env_id}.port")
+        port_file = os.path.join(self.test_port_dir, f"roll_{self.mgr.env_id}.port")
         assert os.path.exists(port_file)
 
         self.mgr._cleanup_port_file()

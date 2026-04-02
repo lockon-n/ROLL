@@ -7,3 +7,10 @@ custom_env:
     use_thread_lock: false
     env_config:
       tag: Minecraft
+      # mcbots process management
+      mcbots_project_root: ""  # Path to mcbots project (required for auto-start)
+      mc_server_host: "127.0.0.1"
+      mc_server_port: 25565
+      render_mode: cpu
+      client_health_check_timeout: 180
+      agent_max_llm_successes: 0  # 0 = unlimited

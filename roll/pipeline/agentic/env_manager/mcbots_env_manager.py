@@ -143,10 +143,24 @@ class McbotsEnvManager(BaseEnvManager):
         self._httpd: Optional[HTTPServer] = None
         self._server_thread: Optional[threading.Thread] = None
 
+        # Process management state
+        self._client_proc: Optional[subprocess.Popen] = None
+        self._agent_proc: Optional[subprocess.Popen] = None
+        self._runtime_config: Optional[Dict] = None
+
         # Config
         self.tag = self.env_config.get("tag", "Minecraft")
         self.env_id = self.env_config.get("env_id", 0)
         self.group_id = self.env_config.get("group_id", 0)
+
+        # mcbots process management config
+        self.mcbots_project_root = self.env_config.get("mcbots_project_root", "")
+        self.mc_server_host = self.env_config.get("mc_server_host", "127.0.0.1")
+        self.mc_server_port = self.env_config.get("mc_server_port", 25565)
+        self.render_mode = self.env_config.get("render_mode", "cpu")
+        self.client_health_check_timeout = self.env_config.get("client_health_check_timeout", 180)
+        self.agent_max_llm_successes = self.env_config.get("agent_max_llm_successes", 0)
+        self.bot_name = self.env_config.get("bot_name", f"Bot{self.env_id}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Main loop
@@ -170,11 +184,18 @@ class McbotsEnvManager(BaseEnvManager):
         # Write port to discoverable file
         self._write_port_file()
 
-        # Block until stopped
         try:
+            # Start MC client and wait for readiness
+            self._ensure_client_running()
+
+            # Episode loop: start agent, wait for it to finish, repeat
             while self.running:
-                time.sleep(1.0)
+                self._ensure_client_running()
+                self._start_agent()
+                self._wait_for_agent()
         finally:
+            self._kill_agent()
+            self._kill_client()
             self._stop_http_server()
             self._cleanup_port_file()
             # Notify output queue that this env is done (prevents pipeline hang)
@@ -254,23 +275,230 @@ class McbotsEnvManager(BaseEnvManager):
             self._server_thread.join(timeout=5)
             self._server_thread = None
 
+    def _get_port_dir(self) -> str:
+        """Get port directory from pipeline config output_dir, falling back to env var."""
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if output_dir:
+            return os.path.join(output_dir, "ports")
+        return os.environ.get("MCBOTS_PORT_DIR", "/tmp/roll_mcbots_ports")
+
     def _write_port_file(self):
         """Write assigned port to a discoverable file for mcbots to read."""
-        import os
-        port_dir = os.environ.get("MCBOTS_PORT_DIR", "/tmp/roll_mcbots_ports")
+        port_dir = self._get_port_dir()
         os.makedirs(port_dir, exist_ok=True)
-        port_file = os.path.join(port_dir, f"{self.env_id}.port")
+        port_file = os.path.join(port_dir, f"roll_{self.env_id}.port")
         with open(port_file, "w") as f:
             f.write(str(self.http_port))
 
     def _cleanup_port_file(self):
-        import os
-        port_dir = os.environ.get("MCBOTS_PORT_DIR", "/tmp/roll_mcbots_ports")
-        port_file = os.path.join(port_dir, f"{self.env_id}.port")
+        port_dir = self._get_port_dir()
+        port_file = os.path.join(port_dir, f"roll_{self.env_id}.port")
         try:
             os.remove(port_file)
         except OSError:
             pass
+
+    # ──────────────────────────────────────────────────────────────────────
+    # MC Client Process Management
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _ensure_client_running(self):
+        """Start MC client if not running, wait for health check."""
+        if self._client_proc is not None and self._client_proc.poll() is None:
+            # Client still alive, verify health
+            if self._check_client_health():
+                return
+            self.logger.warning(f"env_id={self.env_id}: MC client alive but health check failed, restarting")
+            self._kill_client()
+
+        self._start_client()
+        self._wait_client_ready()
+
+    def _start_client(self):
+        """Launch MC client via start-single-bot-inside.sh."""
+        if not self.mcbots_project_root:
+            self.logger.warning("mcbots_project_root not configured, skipping MC client startup")
+            return
+
+        launch_script = os.path.join(
+            self.mcbots_project_root, "scripts", "launch", "start-single-bot-inside.sh"
+        )
+        if not os.path.isfile(launch_script):
+            raise FileNotFoundError(f"MC client launch script not found: {launch_script}")
+
+        env = {
+            **os.environ,
+            "BOT_NAME": self.bot_name,
+            "SERVER_HOST": str(self.mc_server_host),
+            "SERVER_PORT": str(self.mc_server_port),
+            "RENDER_MODE": self.render_mode,
+            "ENABLE_REMOTE_BASH": "true",
+            "CLIENT_FOREGROUND": "false",
+            "MCBOTS_PROJECT_ROOT": self.mcbots_project_root,
+        }
+
+        self.logger.info(
+            f"env_id={self.env_id}: Starting MC client '{self.bot_name}' "
+            f"(server={self.mc_server_host}:{self.mc_server_port})"
+        )
+        self._client_proc = subprocess.Popen(
+            ["bash", launch_script, self.bot_name],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        # Wait for script to finish (it launches client in background and exits)
+        self._client_proc.wait(timeout=60)
+        if self._client_proc.returncode != 0:
+            output = self._client_proc.stdout.read().decode(errors="replace") if self._client_proc.stdout else ""
+            raise RuntimeError(
+                f"MC client launch script failed (rc={self._client_proc.returncode}): {output[-500:]}"
+            )
+
+        # Read runtime config written by the launch script
+        runtime_path = os.path.join(
+            self.mcbots_project_root, "workspaces", "main", self.bot_name, ".mcbots_runtime.json"
+        )
+        if not os.path.isfile(runtime_path):
+            raise FileNotFoundError(f"MC client runtime config not found: {runtime_path}")
+        with open(runtime_path) as f:
+            self._runtime_config = json.load(f)
+
+        self.logger.info(
+            f"env_id={self.env_id}: MC client launched, "
+            f"agentbridge_port={self._runtime_config['agentbridge']['port']}"
+        )
+
+    def _wait_client_ready(self):
+        """Poll AgentBridge health endpoint until ready."""
+        if self._runtime_config is None:
+            return
+
+        ab_host = self._runtime_config["agentbridge"]["host"]
+        ab_port = self._runtime_config["agentbridge"]["port"]
+        url = f"http://{ab_host}:{ab_port}/api/health"
+        deadline = time.time() + self.client_health_check_timeout
+
+        self.logger.info(f"env_id={self.env_id}: Waiting for MC client health check ({url})...")
+        while time.time() < deadline:
+            if self._check_client_health():
+                self.logger.info(f"env_id={self.env_id}: MC client is ready")
+                return
+            time.sleep(2.0)
+
+        raise TimeoutError(
+            f"MC client health check timed out after {self.client_health_check_timeout}s"
+        )
+
+    def _check_client_health(self) -> bool:
+        """Check AgentBridge /api/health endpoint."""
+        if self._runtime_config is None:
+            return False
+        ab_host = self._runtime_config["agentbridge"]["host"]
+        ab_port = self._runtime_config["agentbridge"]["port"]
+        try:
+            req = urllib.request.Request(f"http://{ab_host}:{ab_port}/api/health")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                return data.get("success", False)
+        except Exception:
+            return False
+
+    def _kill_client(self):
+        """Terminate MC client process tree."""
+        if self._client_proc is not None:
+            pid = self._client_proc.pid
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            self._client_proc = None
+        self._runtime_config = None
+
+    # ──────────────────────────────────────────────────────────────────────
+    # mcbots Agent Process Management
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _start_agent(self):
+        """Launch mcbots agent subprocess for one episode."""
+        if not self.mcbots_project_root:
+            self.logger.warning("mcbots_project_root not configured, skipping agent startup")
+            # Fallback: wait for external agent to connect
+            while self.running:
+                time.sleep(1.0)
+            return
+
+        agent_main = os.path.join(self.mcbots_project_root, "agent", "main.py")
+        if not os.path.isfile(agent_main):
+            raise FileNotFoundError(f"mcbots agent main.py not found: {agent_main}")
+
+        # Read remote_bash config from MC client's runtime config
+        rb_host = "127.0.0.1"
+        rb_port = "9090"
+        if self._runtime_config:
+            rb_host = str(self._runtime_config.get("remote_bash", {}).get("host", rb_host))
+            rb_port = str(self._runtime_config.get("remote_bash", {}).get("port", rb_port))
+
+        roll_url = f"http://127.0.0.1:{self.http_port}"
+
+        env = {
+            **os.environ,
+            "MCBOTS_BASE_URL": f"{roll_url}/v1",
+            "MCBOTS_ROLL_NOTIFY_URL": roll_url,
+            "MCBOTS_REMOTE_BASH_HOST": rb_host,
+            "MCBOTS_REMOTE_BASH_PORT": rb_port,
+            "MCBOTS_API_KEY": "roll-internal",
+        }
+        if self.agent_max_llm_successes > 0:
+            env["MCBOTS_MAX_LLM_REQUEST_SUCCESSES"] = str(self.agent_max_llm_successes)
+
+        self.logger.info(
+            f"env_id={self.env_id}: Starting mcbots agent "
+            f"(base_url={roll_url}/v1, remote_bash={rb_host}:{rb_port})"
+        )
+        self._agent_proc = subprocess.Popen(
+            ["python", agent_main],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid,
+        )
+
+    def _wait_for_agent(self):
+        """Wait for agent subprocess to exit. Log if it crashed."""
+        if self._agent_proc is None:
+            return
+        while self.running:
+            retcode = self._agent_proc.poll()
+            if retcode is not None:
+                if retcode != 0:
+                    output = ""
+                    if self._agent_proc.stdout:
+                        output = self._agent_proc.stdout.read().decode(errors="replace")[-1000:]
+                    self.logger.warning(
+                        f"env_id={self.env_id}: mcbots agent exited with code {retcode}. "
+                        f"Last output: {output}"
+                    )
+                else:
+                    self.logger.info(f"env_id={self.env_id}: mcbots agent finished normally")
+                self._agent_proc = None
+                return
+            time.sleep(1.0)
+        # If self.running became False, kill the agent
+        self._kill_agent()
+
+    def _kill_agent(self):
+        """Terminate mcbots agent process."""
+        if self._agent_proc is not None and self._agent_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self._agent_proc.pid), signal.SIGTERM)
+                self._agent_proc.wait(timeout=5)
+            except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(os.getpgid(self._agent_proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+        self._agent_proc = None
 
     # ──────────────────────────────────────────────────────────────────────
     # HTTP Handlers
