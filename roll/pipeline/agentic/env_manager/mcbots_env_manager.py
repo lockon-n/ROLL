@@ -3,9 +3,12 @@ McbotsEnvManager: A thin recording proxy that bridges mcbots' OpenAI-compatible
 agent loop with ROLL's RL training pipeline.
 
 Architecture:
-    mcbots env (external) → HTTP → McbotsEnvManager → PolicyProxy → vLLM
-    McbotsEnvManager records messages/responses and converts completed
-    context windows to DataProto for training.
+    McbotsEnvManager (ROLL env worker)
+      ├── HTTP server (推理 + window/episode signals)
+      ├── MC client process (Minecraft game client, long-lived)
+      └── mcbots agent process (decision loop, disposable per episode)
+
+    mcbots agent → HTTP → McbotsEnvManager → PolicyProxy → vLLM
 
 See plan: /homes/junlong/.claude/plans/mutable-hatching-naur.md
 """
@@ -13,11 +16,16 @@ import base64
 import copy
 import io
 import json
+import os
+import signal
 import socket
+import subprocess
 import threading
 import time
+import urllib.request
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -169,6 +177,12 @@ class McbotsEnvManager(BaseEnvManager):
         finally:
             self._stop_http_server()
             self._cleanup_port_file()
+            # Notify output queue that this env is done (prevents pipeline hang)
+            ray.get(
+                self.output_queue.put.remote(
+                    self.group_id, self.episode_id, self.current_step, None, self.env_id
+                )
+            )
 
     def stop(self):
         self.running = False
@@ -189,15 +203,24 @@ class McbotsEnvManager(BaseEnvManager):
                 body = self.rfile.read(content_length) if content_length > 0 else b""
                 request_data = json.loads(body) if body else {}
 
-                if self.path == "/v1/chat/completions":
-                    response = manager._handle_chat_completion(request_data)
-                elif self.path == "/window_complete":
-                    response = manager._handle_window_complete(request_data)
-                elif self.path == "/episode_done":
-                    response = manager._handle_episode_done(request_data)
-                else:
-                    response = {"error": f"Unknown endpoint: {self.path}"}
-                    self.send_response(404)
+                try:
+                    if self.path == "/v1/chat/completions":
+                        response = manager._handle_chat_completion(request_data)
+                    elif self.path == "/window_complete":
+                        response = manager._handle_window_complete(request_data)
+                    elif self.path == "/episode_done":
+                        response = manager._handle_episode_done(request_data)
+                    else:
+                        response = {"error": f"Unknown endpoint: {self.path}"}
+                        self.send_response(404)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps(response).encode())
+                        return
+                except Exception as e:
+                    manager.logger.error(f"Error handling {self.path}: {e}", exc_info=True)
+                    response = {"error": str(e), "choices": []}
+                    self.send_response(500)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     self.wfile.write(json.dumps(response).encode())
@@ -269,6 +292,7 @@ class McbotsEnvManager(BaseEnvManager):
         chat_template_kwargs = dict(
             add_generation_prompt=True,
             tokenize=False,
+            enable_thinking=getattr(self.pipeline_config, "enable_thinking", False),
         )
         if getattr(self.pipeline_config, "chat_template", None) is not None:
             chat_template_kwargs["chat_template"] = self.pipeline_config.chat_template
@@ -276,8 +300,7 @@ class McbotsEnvManager(BaseEnvManager):
         lm_input_texts = self.tokenizer.apply_chat_template(messages_vl, **chat_template_kwargs)
 
         feature = {self.collator.prompt_key: lm_input_texts}
-        if pil_images:
-            feature[self.collator.image_key] = pil_images
+        feature[self.collator.image_key] = pil_images if pil_images else None
         inputs = self.collator([feature])
         lm_input: DataProto = DataProto.from_single_dict(inputs)
 
@@ -460,8 +483,7 @@ class McbotsEnvManager(BaseEnvManager):
         lm_input_texts = self.tokenizer.apply_chat_template(messages_vl, **chat_template_kwargs)
 
         feature = {self.collator.prompt_key: lm_input_texts}
-        if pil_images:
-            feature[self.collator.image_key] = pil_images
+        feature[self.collator.image_key] = pil_images if pil_images else None
         inputs = self.collator([feature])
         lm_input: DataProto = DataProto.from_single_dict(inputs)
 
@@ -526,8 +548,9 @@ class McbotsEnvManager(BaseEnvManager):
         prompt_mask = pad_to_length(prompt_mask, length=seq_len, pad_value=0)
         score_tensor = pad_to_length(score_tensor, length=seq_len, pad_value=0)
 
-        # Count assistant turns for metrics
+        # Count assistant turns and response length for metrics
         num_assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
+        response_length = response_mask.sum(dim=-1).float().mean().item()
 
         # Pack DataProto
         lm_input.batch.update({
@@ -550,6 +573,7 @@ class McbotsEnvManager(BaseEnvManager):
         lm_input.meta_info = {
             "metrics": {
                 f"env/{self.tag}/num_actions": num_assistant_turns,
+                "env/response_length": response_length,
             }
         }
 
