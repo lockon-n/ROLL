@@ -441,6 +441,13 @@ class McbotsEnvManager(BaseEnvManager):
 
         roll_url = f"http://127.0.0.1:{self.http_port}"
 
+        # Record directory: {output_dir}/mcbots_records/{bot_name}_ep{episode_id}/
+        record_dir = ""
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if output_dir:
+            record_dir = os.path.join(output_dir, "mcbots_records", f"{self.bot_name}_ep{self.episode_id}")
+            os.makedirs(record_dir, exist_ok=True)
+
         env = {
             **os.environ,
             "MCBOTS_BASE_URL": f"{roll_url}/v1",
@@ -448,7 +455,10 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_REMOTE_BASH_HOST": rb_host,
             "MCBOTS_REMOTE_BASH_PORT": rb_port,
             "MCBOTS_API_KEY": "roll-internal",
+            "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
         }
+        if record_dir:
+            env["MCBOTS_RECORD_DIR"] = record_dir
         if self.agent_max_llm_successes > 0:
             env["MCBOTS_MAX_LLM_REQUEST_SUCCESSES"] = str(self.agent_max_llm_successes)
 
