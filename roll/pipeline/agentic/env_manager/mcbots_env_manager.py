@@ -146,6 +146,7 @@ class McbotsEnvManager(BaseEnvManager):
         # Process management state
         self._client_java_pid: Optional[int] = None
         self._agent_proc: Optional[subprocess.Popen] = None
+        self._agent_log_file = None
         self._runtime_config: Optional[Dict] = None
 
         # Config — top-level keys come from the entry dict, nested keys from entry["config"]
@@ -501,15 +502,19 @@ class McbotsEnvManager(BaseEnvManager):
         if self.agent_max_llm_successes > 0:
             env["MCBOTS_MAX_LLM_REQUEST_SUCCESSES"] = str(self.agent_max_llm_successes)
 
+        # Write agent logs to file for debugging
+        agent_log_path = os.path.join(record_dir, "agent.log") if record_dir else None
         self.logger.info(
             f"env_id={self.env_id}: Starting mcbots agent "
-            f"(base_url={roll_url}/v1, remote_bash={rb_host}:{rb_port})"
+            f"(base_url={roll_url}/v1, remote_bash={rb_host}:{rb_port}, "
+            f"log={agent_log_path})"
         )
+        self._agent_log_file = open(agent_log_path, "w") if agent_log_path else None
         self._agent_proc = subprocess.Popen(
             ["python", "-m", "agent.main"],
             env=env,
             cwd=self.mcbots_project_root,
-            stdout=subprocess.PIPE,
+            stdout=self._agent_log_file or subprocess.PIPE,
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
         )
@@ -518,24 +523,37 @@ class McbotsEnvManager(BaseEnvManager):
         """Wait for agent subprocess to exit. Log if it crashed."""
         if self._agent_proc is None:
             return
-        while self.running:
-            retcode = self._agent_proc.poll()
-            if retcode is not None:
-                if retcode != 0:
-                    output = ""
-                    if self._agent_proc.stdout:
-                        output = self._agent_proc.stdout.read().decode(errors="replace")[-1000:]
-                    self.logger.warning(
-                        f"env_id={self.env_id}: mcbots agent exited with code {retcode}. "
-                        f"Last output: {output}"
-                    )
-                else:
-                    self.logger.info(f"env_id={self.env_id}: mcbots agent finished normally")
-                self._agent_proc = None
-                return
-            time.sleep(1.0)
-        # If self.running became False, kill the agent
-        self._kill_agent()
+        try:
+            while self.running:
+                retcode = self._agent_proc.poll()
+                if retcode is not None:
+                    if retcode != 0:
+                        # Read last output from log file or pipe
+                        output = ""
+                        if self._agent_log_file is not None:
+                            self._agent_log_file.flush()
+                            try:
+                                with open(self._agent_log_file.name) as f:
+                                    output = f.read()[-1000:]
+                            except OSError:
+                                pass
+                        elif self._agent_proc.stdout:
+                            output = self._agent_proc.stdout.read().decode(errors="replace")[-1000:]
+                        self.logger.warning(
+                            f"env_id={self.env_id}: mcbots agent exited with code {retcode}. "
+                            f"Last output: {output}"
+                        )
+                    else:
+                        self.logger.info(f"env_id={self.env_id}: mcbots agent finished normally")
+                    self._agent_proc = None
+                    return
+                time.sleep(1.0)
+            # If self.running became False, kill the agent
+            self._kill_agent()
+        finally:
+            if self._agent_log_file is not None:
+                self._agent_log_file.close()
+                self._agent_log_file = None
 
     def _kill_agent(self):
         """Terminate mcbots agent process."""
