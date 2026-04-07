@@ -162,6 +162,8 @@ class McbotsEnvManager(BaseEnvManager):
         self.render_mode = cfg.get("render_mode", "cpu")
         self.client_health_check_timeout = cfg.get("client_health_check_timeout", 180)
         self.agent_max_llm_successes = cfg.get("agent_max_llm_successes", 0)
+        self.max_images_in_context = cfg.get("max_images_in_context", 80)
+        self.keep_images_on_reset = cfg.get("keep_images_on_reset", 20)
         self.bot_name = cfg.get("bot_name", f"Bot{self.env_id}")
 
     # ──────────────────────────────────────────────────────────────────────
@@ -509,8 +511,8 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_DISPLAY": display,
             "MCBOTS_LOG_FILE_PATH": game_log_path,
             "MCBOTS_RECORD_VIDEO": "false",
-            "MCBOTS_MAX_IMAGES_IN_CONTEXT": str(cfg.get("max_images_in_context", 80)),
-            "MCBOTS_KEEP_IMAGES_ON_RESET": str(cfg.get("keep_images_on_reset", 20)),
+            "MCBOTS_MAX_IMAGES_IN_CONTEXT": str(self.max_images_in_context),
+            "MCBOTS_KEEP_IMAGES_ON_RESET": str(self.keep_images_on_reset),
             "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
         }
         if record_dir:
