@@ -10,21 +10,21 @@ hydra:
     dir: .
   output_subdir: null
 
-exp_name: "qwen3_5_mcbots"
+exp_name: "qwen3_5_0_8B_agentic_mcbots"
 seed: 42
-logging_dir: ./output/logs
-output_dir: ./output
-render_save_dir: ./output/render
+logging_dir: ./output/logs/${exp_name}
+output_dir: ./output/${exp_name}
+render_save_dir: ./output/render/${exp_name}
 
 checkpoint_config:
   type: file_system
-  output_dir: ../../ckpts/test_roll
+  output_dir: ../../ckpts/test_roll_singlenode/${exp_name}
 
 track_with: wandb
 tracker_kwargs:
-  project: qwen3_5_mcbots
+  project: qwen3_5_0_8B_agentic_mcbots
 
-num_gpus_per_node: 8
+num_gpus_per_node: 4
 
 chat_template_file: ../../models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
@@ -42,13 +42,13 @@ enable_thinking: true
 
 advantage_clip: 0.2
 ppo_epochs: 1
-adv_estimator: "reinforce_pp"
+adv_estimator: "reinforce"
 init_kl_coef: 0.0
 whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /export/ssddata/junlong/models/Qwen/Qwen3.5-4B
+pretrain: /export/ssddata/junlong/models/Qwen/Qwen3.5-0.8B
 
 actor_train:
   model_args:
@@ -112,7 +112,7 @@ reference:
   infer_batch_size: 2
 
 reward_normalization:
-  grouping: traj_group_id
+  grouping: batch
   method: mean_std
 
 # num_env_groups = total number of parallel Minecraft instances
@@ -135,4 +135,16 @@ max_tokens_per_step: 2048
 
 custom_envs:
   Minecraft:
-    ${custom_env.Minecraft}
+    env_type: mcbots
+    max_steps: 100
+    max_tokens_per_step: 2048
+    env_manager_cls: roll.pipeline.agentic.env_manager.mcbots_env_manager.McbotsEnvManager
+    use_thread_lock: false
+    env_config:
+      tag: Minecraft
+      mcbots_project_root: ""  # TODO: set to mcbots project path
+      mc_server_host: "127.0.0.1"  # TODO: set to MC server IP
+      mc_server_port: 25565  # TODO: set to MC server port
+      render_mode: cpu
+      client_health_check_timeout: 180
+      agent_max_llm_successes: 50

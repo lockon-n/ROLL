@@ -1,5 +1,5 @@
 defaults:
-  - ../examples/config/vl_traj_envs@_here_
+  - ../examples/config/mcbots_envs@_here_
   - ../examples/config/deepspeed_zero@_here_
   - ../examples/config/deepspeed_zero2@_here_
   - ../examples/config/deepspeed_zero3@_here_
@@ -10,46 +10,48 @@ hydra:
     dir: .
   output_subdir: null
 
-exp_name: "qwen3_5_0_8B_agentic_sokoban"
+exp_name: "qwen3_5_0_8B_agentic_mcbots"
+
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
+
 seed: 42
-logging_dir: ./output/logs/${exp_name}
-output_dir: ./output/${exp_name}
-render_save_dir: ./output/render/${exp_name}
+logging_dir: /opt/tiger/entry/ROLL/output/logs/${exp_name}
+output_dir: /opt/tiger/entry/ROLL/output/${exp_name}
+render_save_dir: /opt/tiger/entry/ROLL/output/render/${exp_name}
 
 checkpoint_config:
   type: file_system
-  output_dir: ../../ckpts/test_roll_singlenode/${exp_name}
+  output_dir: ${base_ckpt_dir}/checkpoints
 
 track_with: wandb
 tracker_kwargs:
-  project: qwen3_5_0_8B_agentic_sokoban
+  project: qwen3_5_0_8B_agentic_mcbots
 
-num_gpus_per_node: 8
+num_gpus_per_node: 4
 
-chat_template_file: ../../models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
+chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
 max_steps: 1024
 save_steps: 10
 logging_steps: 1
-eval_steps: 10
+eval_steps: 50
 resume_from_checkpoint: false
 
-rollout_batch_size: 1024
-val_batch_size: 512
-sequence_length: 8192
+rollout_batch_size: 16
+val_batch_size: 16
+sequence_length: 32768
 
-enable_thinking: false
-thinking_penalty: -0.2
+enable_thinking: true
 
 advantage_clip: 0.2
 ppo_epochs: 1
-adv_estimator: "grpo"
+adv_estimator: "reinforce"
 init_kl_coef: 0.0
 whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /export/ssddata/junlong/models/Qwen/Qwen3.5-0.8B
+pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-0.8B
 
 actor_train:
   model_args:
@@ -61,7 +63,7 @@ actor_train:
   training_args:
     learning_rate: 1.0e-6
     weight_decay: 0
-    per_device_train_batch_size: 4
+    per_device_train_batch_size: 2
     gradient_accumulation_steps: 2
     warmup_steps: 10
     lr_scheduler_type: cosine
@@ -82,7 +84,7 @@ actor_infer:
     disable_gradient_checkpointing: true
     dtype: bf16
   generating_args:
-    max_new_tokens: 1024
+    max_new_tokens: 2048
     top_p: 0.99
     top_k: 100
     num_beams: 1
@@ -96,7 +98,7 @@ actor_infer:
       load_format: auto
       enable_prefix_caching: false
       limit_mm_per_prompt:
-        image: ${max_actions_per_traj}
+        image: 100
   device_mapping: list(range(0,4))
 
 reference:
@@ -113,34 +115,41 @@ reference:
   infer_batch_size: 2
 
 reward_normalization:
-  grouping: traj_group_id
+  grouping: batch
   method: mean_std
 
+# num_env_groups = total number of parallel Minecraft instances
+# group_size = 1 (each env is unique, no repeated rollouts)
 train_env_manager:
-  format_penalty: -0.15
-  max_env_num_per_worker: 128
-  num_env_groups: 128
-  group_size: 8
-  tags: [SimpleSokoban]
-  num_groups_partition: [128]
+  num_env_workers: 4
+  max_env_num_per_worker: 4
+  num_env_groups: 16
+  group_size: 1
+  tags: [Minecraft]
+  num_groups_partition: [16]
 
 val_env_manager:
-  max_env_num_per_worker: 256
-  num_env_groups: 512
+  num_env_workers: 4
+  max_env_num_per_worker: 4
+  num_env_groups: 8
   group_size: 1
-  tags: [SimpleSokoban, LargerSokoban, SokobanDifferentGridVocab, FrozenLake]
-  num_groups_partition: [128, 128, 128, 128]
+  tags: [Minecraft]
+  num_groups_partition: [8]
 
-max_tokens_per_step: 64
+max_tokens_per_step: 2048
 
 custom_envs:
-  SimpleSokoban:
-    ${custom_env.SimpleSokoban}
-  LargerSokoban:
-    ${custom_env.LargerSokoban}
-  SokobanDifferentGridVocab:
-    ${custom_env.SokobanDifferentGridVocab}
-  FrozenLake:
-    ${custom_env.FrozenLake}
-  FrozenLakeThink:
-    ${custom_env.FrozenLakeThink}
+  Minecraft:
+    env_type: mcbots
+    max_steps: 100
+    max_tokens_per_step: 2048
+    env_manager_cls: roll.pipeline.agentic.env_manager.mcbots_env_manager.McbotsEnvManager
+    use_thread_lock: false
+    env_config:
+      tag: Minecraft
+      mcbots_project_root: ""  # TODO: set to mcbots project path
+      mc_server_host: "127.0.0.1"  # TODO: set to MC server IP
+      mc_server_port: 25565  # TODO: set to MC server port
+      render_mode: cpu
+      client_health_check_timeout: 180
+      agent_max_llm_successes: 50
