@@ -34,14 +34,14 @@ chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-lar
 max_steps: 1024
 save_steps: 10
 logging_steps: 1
-eval_steps: 50
+eval_steps: 0
 resume_from_checkpoint: false
 
 rollout_batch_size: 16
 val_batch_size: 16
 sequence_length: 32768
 
-enable_thinking: true
+enable_thinking: false
 
 advantage_clip: 0.2
 ppo_epochs: 1
@@ -122,34 +122,33 @@ reward_normalization:
 # group_size = 1 (each env is unique, no repeated rollouts)
 train_env_manager:
   num_env_workers: 4
-  max_env_num_per_worker: 4
-  num_env_groups: 16
-  group_size: 1
-  tags: [Minecraft]
-  num_groups_partition: [16]
-
-val_env_manager:
-  num_env_workers: 4
-  max_env_num_per_worker: 4
+  max_env_num_per_worker: 2
   num_env_groups: 8
   group_size: 1
   tags: [Minecraft]
   num_groups_partition: [8]
 
-max_tokens_per_step: 2048
+val_env_manager:
+  num_env_workers: 0
+  max_env_num_per_worker: 0
+  num_env_groups: 0
+  group_size: 1
+  tags: [Minecraft]
+  num_groups_partition: [0]
+
+max_tokens_per_step: 512
 
 custom_envs:
   Minecraft:
     env_type: mcbots
-    max_steps: 100
-    max_tokens_per_step: 2048
+    max_tokens_per_step: ${max_tokens_per_step}
     env_manager_cls: roll.pipeline.agentic.env_manager.mcbots_env_manager.McbotsEnvManager
     use_thread_lock: false
     env_config:
       tag: Minecraft
-      mcbots_project_root: ""  # TODO: set to mcbots project path
-      mc_server_host: "127.0.0.1"  # TODO: set to MC server IP
-      mc_server_port: 25565  # TODO: set to MC server port
+      mcbots_project_root: "/opt/tiger/entry/mcbots"
+      mc_server_host: "::1"  # LOCAL
+      mc_server_port: 20000
       render_mode: cpu
       client_health_check_timeout: 180
-      agent_max_llm_successes: 50
+      agent_max_llm_successes: 5
