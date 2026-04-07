@@ -510,6 +510,7 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_REMOTE_BASH_HOST": rb_host,
             "MCBOTS_REMOTE_BASH_PORT": rb_port,
             "MCBOTS_API_KEY": "roll-internal",
+            "MCBOTS_MODEL": "roll-policy",
             "MCBOTS_WORKSPACE_ROOT": workspace_root,
             "MCBOTS_DISPLAY": display,
             "MCBOTS_LOG_FILE_PATH": game_log_path,
