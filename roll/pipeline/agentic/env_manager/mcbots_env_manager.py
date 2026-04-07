@@ -195,6 +195,9 @@ class McbotsEnvManager(BaseEnvManager):
             # Episode loop: start agent, wait for it to finish, repeat
             while self.running:
                 self._ensure_client_running()
+                # Reset window state for new episode (agent may have crashed without
+                # calling /episode_done, leaving stale messages)
+                self.current_window_messages = []
                 self._start_agent()
                 self._wait_for_agent()
         finally:
