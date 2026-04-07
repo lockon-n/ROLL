@@ -1,0 +1,158 @@
+defaults:
+  - ../examples/config/mcbots_envs@_here_
+  - ../examples/config/deepspeed_zero@_here_
+  - ../examples/config/deepspeed_zero2@_here_
+  - ../examples/config/deepspeed_zero3@_here_
+  - ../examples/config/deepspeed_zero3_cpuoffload@_here_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+exp_name: "qwen3_5_4B_agentic_mcbots"
+
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
+
+seed: 42
+logging_dir: /opt/tiger/entry/ROLL/output/logs/${exp_name}
+output_dir: /opt/tiger/entry/ROLL/output/${exp_name}
+render_save_dir: /opt/tiger/entry/ROLL/output/render/${exp_name}
+
+checkpoint_config:
+  type: file_system
+  output_dir: ${base_ckpt_dir}/checkpoints
+
+track_with: wandb
+tracker_kwargs:
+  project: qwen3_5_4B_agentic_mcbots
+
+num_gpus_per_node: 4
+
+chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
+
+max_steps: 1024
+save_steps: 10
+logging_steps: 1
+eval_steps: 0
+resume_from_checkpoint: false
+
+rollout_batch_size: 16
+val_batch_size: 16
+sequence_length: 32768
+
+enable_thinking: false
+
+advantage_clip: 0.2
+ppo_epochs: 1
+adv_estimator: "reinforce"
+init_kl_coef: 0.0
+whiten_advantages: true
+entropy_loss_coef: 0
+max_grad_norm: 1.0
+
+pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-4B
+
+actor_train:
+  model_args:
+    flash_attn: sdpa
+    attn_implementation: sdpa
+    disable_gradient_checkpointing: false
+    dtype: bf16
+    model_type: ~
+  training_args:
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 2
+    warmup_steps: 10
+    lr_scheduler_type: cosine
+  strategy_args:
+    strategy_name: megatron_train
+    strategy_config:
+      tensor_model_parallel_size: 4                                                                                                                                            
+      context_parallel_size: 1     
+      pipeline_model_parallel_size: 1
+      expert_model_parallel_size: 1
+      virtual_pipeline_model_parallel_size: null
+      sequence_parallel: true 
+      use_distributed_optimizer: true
+      recompute_granularity: full
+      bf16: true
+  device_mapping: list(range(0,4))
+  infer_batch_size: 2
+
+actor_infer:
+  num_gpus_per_worker: 4
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: 2048
+    top_p: 0.99
+    top_k: 100
+    num_beams: 1
+    temperature: 0.99
+    num_return_sequences: 1
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.9
+      block_size: 16
+      load_format: auto
+      enable_prefix_caching: false
+      limit_mm_per_prompt:
+        image: 100
+  device_mapping: list(range(0,4))
+
+reference:
+  model_args:
+    flash_attn: sdpa
+    attn_implementation: sdpa
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    model_type: ~
+  strategy_args:
+    strategy_name: hf_infer
+    strategy_config: ~
+  device_mapping: list(range(0,4))
+  infer_batch_size: 2
+
+reward_normalization:
+  grouping: batch
+  method: mean_std
+
+# num_env_groups = total number of parallel Minecraft instances
+# group_size = 1 (each env is unique, no repeated rollouts)
+train_env_manager:
+  num_env_workers: 4
+  max_env_num_per_worker: 2
+  num_env_groups: 8
+  group_size: 1
+  tags: [Minecraft]
+  num_groups_partition: [8]
+
+val_env_manager:
+  num_env_workers: 0
+  max_env_num_per_worker: 0
+  num_env_groups: 0
+  group_size: 1
+  tags: [Minecraft]
+  num_groups_partition: [0]
+
+max_tokens_per_step: 512
+
+custom_envs:
+  Minecraft:
+    env_type: mcbots
+    max_tokens_per_step: ${max_tokens_per_step}
+    env_manager_cls: roll.pipeline.agentic.env_manager.mcbots_env_manager.McbotsEnvManager
+    use_thread_lock: false
+    env_config:
+      tag: Minecraft
+      mcbots_project_root: "/opt/tiger/entry/mcbots"
+      mc_server_host: "::1"  # LOCAL
+      mc_server_port: 20000
+      render_mode: cpu
+      client_health_check_timeout: 180
+      agent_max_llm_successes: 5
