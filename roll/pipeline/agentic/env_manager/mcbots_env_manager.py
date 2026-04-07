@@ -509,6 +509,8 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_DISPLAY": display,
             "MCBOTS_LOG_FILE_PATH": game_log_path,
             "MCBOTS_RECORD_VIDEO": "false",
+            "MCBOTS_MAX_IMAGES_IN_CONTEXT": str(cfg.get("max_images_in_context", 80)),
+            "MCBOTS_KEEP_IMAGES_ON_RESET": str(cfg.get("keep_images_on_reset", 20)),
             "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
         }
         if record_dir:
