@@ -532,14 +532,32 @@ class McbotsEnvManager(BaseEnvManager):
             f"log={agent_log_path})"
         )
         self._agent_log_file = open(agent_log_path, "w") if agent_log_path else None
+
+        def _child_preexec():
+            """New session + auto-kill when parent dies (Linux only)."""
+            os.setsid()
+            try:
+                import ctypes
+                PR_SET_PDEATHSIG = 1
+                ctypes.CDLL("libc.so.6").prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+            except Exception:
+                pass
+
         self._agent_proc = subprocess.Popen(
             ["python", "-m", "agent.main"],
             env=env,
             cwd=self.mcbots_project_root,
             stdout=self._agent_log_file or subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
+            preexec_fn=_child_preexec,
         )
+
+        # Write PID to file for external cleanup
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if output_dir:
+            pid_file = os.path.join(output_dir, "mcbots_agent_pids.txt")
+            with open(pid_file, "a") as f:
+                f.write(f"{self._agent_proc.pid}\n")
 
     def _wait_for_agent(self):
         """Wait for agent subprocess to exit. Log if it crashed."""
