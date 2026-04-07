@@ -374,7 +374,9 @@ class AgenticConfig(PPOConfig):
             )
 
         val_env_num = self.val_env_manager.num_env_groups * self.val_env_manager.group_size
-        if self.val_batch_size < 0:
+        if val_env_num == 0:
+            logger.info("val_env_num is 0, skipping val batch validation.")
+        elif self.val_batch_size < 0:
             self.val_env_manager.max_traj_per_env = sys.maxsize
         else:
 
@@ -393,8 +395,8 @@ class AgenticConfig(PPOConfig):
             traj_per_env = (self.val_batch_size + val_env_num - 1) // val_env_num
             if self.val_env_manager.max_traj_per_env < 0:
                 self.val_env_manager.max_traj_per_env = traj_per_env
-        logger.info(f"val_env_manager.max_traj_per_env: {self.val_env_manager.max_traj_per_env}")
-        assert self.val_env_manager.max_traj_per_env >= traj_per_env, f"max_traj_per_env must be >= {traj_per_env}"
+            logger.info(f"val_env_manager.max_traj_per_env: {self.val_env_manager.max_traj_per_env}")
+            assert self.val_env_manager.max_traj_per_env >= traj_per_env, f"max_traj_per_env must be >= {traj_per_env}"
 
         if (
             hasattr(self, "actor_infer")
