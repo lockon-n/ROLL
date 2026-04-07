@@ -470,6 +470,7 @@ class McbotsEnvManager(BaseEnvManager):
         self._agent_proc = subprocess.Popen(
             ["python", agent_main],
             env=env,
+            cwd=self.mcbots_project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
