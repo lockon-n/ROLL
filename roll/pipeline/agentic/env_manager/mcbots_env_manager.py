@@ -487,13 +487,28 @@ class McbotsEnvManager(BaseEnvManager):
             record_dir = os.path.join(output_dir, "mcbots_records", f"{self.bot_name}_ep{self.episode_id}")
             os.makedirs(record_dir, exist_ok=True)
 
+        # Workspace and display from runtime config
+        workspace_root = ""
+        display = ":0"
+        game_log_path = ""
+        if self._runtime_config:
+            workspace_root = self._runtime_config.get("workspace_root", "")
+            display = self._runtime_config.get("x11", {}).get("display", ":0")
+            if workspace_root:
+                game_log_path = os.path.join(workspace_root, "game", "logs", "latest.log")
+
         env = {
             **os.environ,
+            "MCBOTS_PLAYER": self.bot_name,
             "MCBOTS_BASE_URL": f"{roll_url}/v1",
             "MCBOTS_ROLL_NOTIFY_URL": roll_url,
             "MCBOTS_REMOTE_BASH_HOST": rb_host,
             "MCBOTS_REMOTE_BASH_PORT": rb_port,
             "MCBOTS_API_KEY": "roll-internal",
+            "MCBOTS_WORKSPACE_ROOT": workspace_root,
+            "MCBOTS_DISPLAY": display,
+            "MCBOTS_LOG_FILE_PATH": game_log_path,
+            "MCBOTS_RECORD_VIDEO": "false",
             "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
         }
         if record_dir:
