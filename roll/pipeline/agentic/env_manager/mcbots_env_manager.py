@@ -336,7 +336,6 @@ class McbotsEnvManager(BaseEnvManager):
             "SERVER_HOST": str(self.mc_server_host),
             "SERVER_PORT": str(self.mc_server_port),
             "RENDER_MODE": self.render_mode,
-            "ENABLE_REMOTE_BASH": "true",
             "CLIENT_FOREGROUND": "false",
             "MCBOTS_PROJECT_ROOT": self.mcbots_project_root,
         }
