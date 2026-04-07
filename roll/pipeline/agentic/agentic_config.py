@@ -163,18 +163,23 @@ class EnvManagerConfig(WorkerConfig):
         """
         total_envs = self.num_env_groups * self.final_group_size
 
-        if self.num_env_workers > 0:
+        if total_envs == 0:
+            self._envs_per_worker = 0
+            self.world_size = 0
+            logger.info("num_env_groups is 0, no env workers will be created.")
+        elif self.num_env_workers > 0:
             self._envs_per_worker = (total_envs + self.num_env_workers - 1) // self.num_env_workers
             if self.max_env_num_per_worker <= 0:
                 self.max_env_num_per_worker = self._envs_per_worker
+            self.world_size = (total_envs + self._envs_per_worker - 1) // self._envs_per_worker
+            logger.info(f"env workers: {self.world_size}, envs_per_worker: {self._envs_per_worker}, max_concurrent_per_worker: {self.max_env_num_per_worker}")
         else:
             if self.max_env_num_per_worker <= 0:
                 self.max_env_num_per_worker = total_envs
                 logger.warning("all env in one worker by default, you can set max_env_num_per_worker or num_env_workers to scale env.")
             self._envs_per_worker = self.max_env_num_per_worker
-
-        self.world_size = (total_envs + self._envs_per_worker - 1) // self._envs_per_worker
-        logger.info(f"env workers: {self.world_size}, envs_per_worker: {self._envs_per_worker}, max_concurrent_per_worker: {self.max_env_num_per_worker}")
+            self.world_size = (total_envs + self._envs_per_worker - 1) // self._envs_per_worker
+            logger.info(f"env workers: {self.world_size}, envs_per_worker: {self._envs_per_worker}, max_concurrent_per_worker: {self.max_env_num_per_worker}")
         self.env_configs: Optional[Dict[int, Dict[int, Dict]]] = None
         """
         worker_rank: 
