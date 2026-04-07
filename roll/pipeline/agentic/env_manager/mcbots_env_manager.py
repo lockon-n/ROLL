@@ -144,7 +144,7 @@ class McbotsEnvManager(BaseEnvManager):
         self._server_thread: Optional[threading.Thread] = None
 
         # Process management state
-        self._client_proc: Optional[subprocess.Popen] = None
+        self._client_java_pid: Optional[int] = None
         self._agent_proc: Optional[subprocess.Popen] = None
         self._runtime_config: Optional[Dict] = None
 
@@ -305,11 +305,13 @@ class McbotsEnvManager(BaseEnvManager):
 
     def _ensure_client_running(self):
         """Start MC client if not running, wait for health check."""
-        if self._client_proc is not None and self._client_proc.poll() is None:
-            # Client still alive, verify health
-            if self._check_client_health():
-                return
-            self.logger.warning(f"env_id={self.env_id}: MC client alive but health check failed, restarting")
+        # The launch script starts Java in background and exits, so we can't
+        # rely on _client_proc.poll() to check liveness. Use health check instead.
+        if self._runtime_config is not None and self._check_client_health():
+            return
+
+        if self._runtime_config is not None:
+            self.logger.warning(f"env_id={self.env_id}: MC client health check failed, restarting")
             self._kill_client()
 
         self._start_client()
@@ -342,18 +344,18 @@ class McbotsEnvManager(BaseEnvManager):
             f"env_id={self.env_id}: Starting MC client '{self.bot_name}' "
             f"(server={self.mc_server_host}:{self.mc_server_port})"
         )
-        self._client_proc = subprocess.Popen(
+        proc = subprocess.Popen(
             ["bash", launch_script, self.bot_name],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
         # Wait for script to finish (it launches client in background and exits)
-        self._client_proc.wait(timeout=60)
-        if self._client_proc.returncode != 0:
-            output = self._client_proc.stdout.read().decode(errors="replace") if self._client_proc.stdout else ""
+        proc.wait(timeout=60)
+        if proc.returncode != 0:
+            output = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
             raise RuntimeError(
-                f"MC client launch script failed (rc={self._client_proc.returncode}): {output[-500:]}"
+                f"MC client launch script failed (rc={proc.returncode}): {output[-500:]}"
             )
 
         # Read runtime config written by the launch script
@@ -365,10 +367,40 @@ class McbotsEnvManager(BaseEnvManager):
         with open(runtime_path) as f:
             self._runtime_config = json.load(f)
 
+        # Find the Java client PID from the PID file written by the launch script
+        self._client_java_pid = self._find_client_pid()
+
         self.logger.info(
-            f"env_id={self.env_id}: MC client launched, "
+            f"env_id={self.env_id}: MC client launched, pid={self._client_java_pid}, "
             f"agentbridge_port={self._runtime_config['agentbridge']['port']}"
         )
+
+    def _find_client_pid(self) -> Optional[int]:
+        """Find the Java client PID from mcbots runtime PID files."""
+        runtime_dir = os.path.join(self.mcbots_project_root, "runtime")
+        if not os.path.isdir(runtime_dir):
+            return None
+        # Find the most recent PID file for this bot
+        best_pid = None
+        best_mtime = 0.0
+        for fname in os.listdir(runtime_dir):
+            if not fname.endswith(".pids"):
+                continue
+            fpath = os.path.join(runtime_dir, fname)
+            try:
+                with open(fpath) as f:
+                    content = f.read()
+                if f"CLIENT_NAME={self.bot_name}" not in content:
+                    continue
+                mtime = os.path.getmtime(fpath)
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    for line in content.splitlines():
+                        if line.startswith("CLIENT_PID="):
+                            best_pid = int(line.split("=", 1)[1].strip())
+            except (OSError, ValueError):
+                continue
+        return best_pid
 
     def _wait_client_ready(self):
         """Poll AgentBridge health endpoint until ready."""
@@ -406,14 +438,20 @@ class McbotsEnvManager(BaseEnvManager):
             return False
 
     def _kill_client(self):
-        """Terminate MC client process tree."""
-        if self._client_proc is not None:
-            pid = self._client_proc.pid
+        """Terminate MC client Java process."""
+        if self._client_java_pid is not None:
+            self.logger.info(f"env_id={self.env_id}: Killing MC client pid={self._client_java_pid}")
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                os.kill(self._client_java_pid, signal.SIGTERM)
             except (ProcessLookupError, OSError):
                 pass
-            self._client_proc = None
+            # Give it a moment, then force kill if still alive
+            time.sleep(0.5)
+            try:
+                os.kill(self._client_java_pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            self._client_java_pid = None
         self._runtime_config = None
 
     # ──────────────────────────────────────────────────────────────────────
