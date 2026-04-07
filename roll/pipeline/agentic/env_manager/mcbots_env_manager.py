@@ -148,19 +148,20 @@ class McbotsEnvManager(BaseEnvManager):
         self._agent_proc: Optional[subprocess.Popen] = None
         self._runtime_config: Optional[Dict] = None
 
-        # Config
+        # Config — top-level keys come from the entry dict, nested keys from entry["config"]
         self.tag = self.env_config.get("tag", "Minecraft")
         self.env_id = self.env_config.get("env_id", 0)
         self.group_id = self.env_config.get("group_id", 0)
 
-        # mcbots process management config
-        self.mcbots_project_root = self.env_config.get("mcbots_project_root", "")
-        self.mc_server_host = self.env_config.get("mc_server_host", "127.0.0.1")
-        self.mc_server_port = self.env_config.get("mc_server_port", 25565)
-        self.render_mode = self.env_config.get("render_mode", "cpu")
-        self.client_health_check_timeout = self.env_config.get("client_health_check_timeout", 180)
-        self.agent_max_llm_successes = self.env_config.get("agent_max_llm_successes", 0)
-        self.bot_name = self.env_config.get("bot_name", f"Bot{self.env_id}")
+        # mcbots process management config (from YAML env_config, stored under "config" key)
+        cfg = dict(self.env_config.get("config", {}))
+        self.mcbots_project_root = cfg.get("mcbots_project_root", "")
+        self.mc_server_host = cfg.get("mc_server_host", "127.0.0.1")
+        self.mc_server_port = cfg.get("mc_server_port", 25565)
+        self.render_mode = cfg.get("render_mode", "cpu")
+        self.client_health_check_timeout = cfg.get("client_health_check_timeout", 180)
+        self.agent_max_llm_successes = cfg.get("agent_max_llm_successes", 0)
+        self.bot_name = cfg.get("bot_name", f"Bot{self.env_id}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Main loop
