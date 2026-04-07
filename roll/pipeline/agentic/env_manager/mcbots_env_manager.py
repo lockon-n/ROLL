@@ -618,13 +618,12 @@ class McbotsEnvManager(BaseEnvManager):
         if not incoming_messages:
             return {"error": "No messages provided"}
 
-        # ── Record messages ──
-        self._record_incoming_messages(incoming_messages)
+        seq_limit = self.pipeline_config.sequence_length
 
         # ── Extract images and convert to Qwen3.5 VL format ──
         messages_vl, pil_images = self._extract_and_convert_images(incoming_messages)
 
-        # ── Tokenize ──
+        # ── Tokenize (includes image tokens) ──
         chat_template_kwargs = dict(
             add_generation_prompt=True,
             tokenize=False,
@@ -640,11 +639,35 @@ class McbotsEnvManager(BaseEnvManager):
         inputs = self.collator([feature])
         lm_input: DataProto = DataProto.from_single_dict(inputs)
 
+        # ── Sequence length guard (prompt tokens include image tokens) ──
+        prompt_tokens = lm_input.batch["input_ids"].shape[1]
+        remaining = seq_limit - prompt_tokens
+        if remaining <= 0:
+            self.logger.warning(
+                f"env_id={self.env_id}: prompt ({prompt_tokens} tokens) >= "
+                f"sequence_length ({seq_limit}). Emitting current window and "
+                f"returning error to agent."
+            )
+            # Emit the current window (ends at last assistant response, before
+            # the new user messages that pushed us over the limit)
+            self._emit_window_if_needed(reward=0.0)
+            return {
+                "error": f"Prompt too long ({prompt_tokens} tokens, limit {seq_limit}). "
+                         f"Please trim context.",
+                "choices": [],
+            }
+
+        # ── Record messages (only after sequence length check passes) ──
+        self._record_incoming_messages(incoming_messages)
+
         # ── Generate via PolicyProxy ──
+        requested_max_tokens = request.get("max_tokens", 2048)
+        capped_max_tokens = min(requested_max_tokens, remaining)
+
         generation_config = {
             "temperature": request.get("temperature", 1.0),
             "top_p": request.get("top_p", 1.0),
-            "max_new_tokens": request.get("max_tokens", 2048),
+            "max_new_tokens": capped_max_tokens,
         }
         # Merge with worker generating_args defaults
         default_config = self.worker_config.generating_args.to_dict()
@@ -696,6 +719,18 @@ class McbotsEnvManager(BaseEnvManager):
                 "total_tokens": lm_input.batch["input_ids"].shape[1] + len(lm_output.batch["responses"][0]),
             },
         }
+
+    def _emit_window_if_needed(self, reward: float = 0.0):
+        """Emit current window as DataProto if it has assistant messages, then reset."""
+        has_assistant = any(m.get("role") == "assistant" for m in self.current_window_messages)
+        if not self.current_window_messages or not has_assistant:
+            return
+        try:
+            self._handle_window_complete({"reward": reward})
+        except Exception as e:
+            self.logger.error(f"Failed to emit window: {e}", exc_info=True)
+            self.current_window_messages = []
+            self.sequence_id_counter += 1
 
     def _handle_window_complete(self, request: Dict) -> Dict:
         """Handle POST /window_complete — emit current context window as DataProto."""
