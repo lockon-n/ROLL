@@ -776,10 +776,49 @@ class McbotsEnvManager(BaseEnvManager):
             f"messages={len(self.current_window_messages)}"
         )
 
+        # Save window metadata for debugging
+        self._save_window_metadata(reward, traj_group_id, traj_id)
+
         # Reset
         self.current_window_messages = []
         self.sequence_id_counter += 1
         return {"status": "ok", "sequence_id": self.sequence_id_counter}
+
+    def _save_window_metadata(self, reward: float, traj_group_id: str, traj_id: str):
+        """Save window metadata + messages to record directory for debugging."""
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if not output_dir:
+            return
+        record_dir = os.path.join(
+            output_dir, "mcbots_records",
+            f"{self.bot_name}_ep{self.episode_id}"
+        )
+        os.makedirs(record_dir, exist_ok=True)
+        window_file = os.path.join(record_dir, f"window_{self.sequence_id_counter}.json")
+        num_assistant = sum(1 for m in self.current_window_messages if m.get("role") == "assistant")
+        num_images = sum(
+            1 for m in self.current_window_messages
+            for c in (m.get("content") if isinstance(m.get("content"), list) else [])
+            if isinstance(c, dict) and c.get("type") in ("image_url", "image")
+        )
+        metadata = {
+            "env_id": self.env_id,
+            "bot_name": self.bot_name,
+            "episode_id": self.episode_id,
+            "sequence_id": self.sequence_id_counter,
+            "reward": reward,
+            "traj_group_id": traj_group_id,
+            "traj_id": traj_id,
+            "num_messages": len(self.current_window_messages),
+            "num_assistant_turns": num_assistant,
+            "num_images": num_images,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        try:
+            with open(window_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception:
+            pass
 
     def _handle_episode_done(self, request: Dict) -> Dict:
         """Handle POST /episode_done — emit final window and reset for next episode."""
