@@ -468,7 +468,7 @@ class McbotsEnvManager(BaseEnvManager):
             f"(base_url={roll_url}/v1, remote_bash={rb_host}:{rb_port})"
         )
         self._agent_proc = subprocess.Popen(
-            ["python", agent_main],
+            ["python", "-m", "agent.main"],
             env=env,
             cwd=self.mcbots_project_root,
             stdout=subprocess.PIPE,
