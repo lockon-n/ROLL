@@ -12,12 +12,12 @@ hydra:
 
 exp_name: "qwen3_5_4B_agentic_mcbots"
 
-base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_singlenode/${exp_name}
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}
 
 seed: 42
-logging_dir: /opt/tiger/entry/ROLL/output/logs/${exp_name}
-output_dir: /opt/tiger/entry/ROLL/output/${exp_name}
-render_save_dir: /opt/tiger/entry/ROLL/output/render/${exp_name}
+logging_dir: ${base_ckpt_dir}/logs/${exp_name}
+output_dir: ${base_ckpt_dir}/output/${exp_name}
+render_save_dir: ${base_ckpt_dir}/render/${exp_name}
 
 checkpoint_config:
   type: file_system
@@ -27,7 +27,7 @@ track_with: wandb
 tracker_kwargs:
   project: qwen3_5_4B_agentic_mcbots
 
-num_gpus_per_node: 4
+num_gpus_per_node: 2
 
 chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
@@ -70,7 +70,7 @@ actor_train:
   strategy_args:
     strategy_name: megatron_train
     strategy_config:
-      tensor_model_parallel_size: 4                                                                                                                                            
+      tensor_model_parallel_size: 2                                                                                                                                            
       context_parallel_size: 1     
       pipeline_model_parallel_size: 1
       expert_model_parallel_size: 1
@@ -83,7 +83,7 @@ actor_train:
   infer_batch_size: 2
 
 actor_infer:
-  num_gpus_per_worker: 4
+  num_gpus_per_worker: 2
   model_args:
     disable_gradient_checkpointing: true
     dtype: bf16
