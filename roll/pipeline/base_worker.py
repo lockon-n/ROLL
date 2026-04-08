@@ -73,7 +73,7 @@ class ActorWorker(Worker):
             is_offload_states=is_offload_states,
             load_kwargs={"include": [OffloadStateType.model_params, OffloadStateType.other_params]},
         ):
-            data = data.to(current_platform.device_type)
+            data = data.to(torch.device(current_platform.device_type, self.local_rank))
             data = self.strategy.get_data_input(data)
             per_device_train_batch_size = self.worker_config.training_args.per_device_train_batch_size
             backward_batch_size = (
@@ -97,6 +97,10 @@ class ActorWorker(Worker):
             for batch_idx, backward_batch in tqdm(enumerate(dataloader),
                                                   desc=f"{self.worker_name} train global step {global_step}",
                                                   total=data.batch.batch_size[0] * self.pipeline_config.ppo_epochs // backward_batch_size):
+                self.logger.info(f"[Step {global_step}] mini-batch {batch_idx}:")
+                if backward_batch.batch is not None:
+                    for key in sorted(backward_batch.batch.keys()):
+                        self.logger.info(f"  {key}: {backward_batch.batch[key].shape}")
                 pg_metrics = self.strategy.train_step(batch=backward_batch, loss_func=self.loss_func)
                 if self.worker_config.use_dynamic_batching_in_train or self.worker_config.use_sequence_packing:
                     pg_metrics = reduce_metrics(pg_metrics)
@@ -137,7 +141,7 @@ class ActorWorker(Worker):
             load_kwargs={"include": [OffloadStateType.model_params]},
         ):
             data = self.strategy.get_data_input(data)
-            data = data.to(current_platform.device_type)
+            data = data.to(torch.device(current_platform.device_type, self.local_rank))
             data.meta_info["micro_batch_size"] = self.worker_config.infer_batch_size
 
             with torch.no_grad():
@@ -194,7 +198,7 @@ class ActorWorker(Worker):
             for sample_uuid in sample_uuids:
                 cached_old_log_probs.append(self._logprobs_cache[sample_uuid])
 
-            old_log_probs = torch.cat(cached_old_log_probs, dim=0).to(current_platform.device_type)
+            old_log_probs = torch.cat(cached_old_log_probs, dim=0).to(torch.device(current_platform.device_type, self.local_rank))
         else:
             # Cache miss - use current log_probs as old_log_probs (mathematically equivalent in on-policy)
             old_log_probs = log_probs.detach()
@@ -501,7 +505,7 @@ class InferWorker(Worker):
         global_step = data.meta_info.get("global_step", 0)
         self.logger.info(f"{self.worker_name} generate global step {global_step}")
 
-        data = data.to("cuda")
+        data = data.to(torch.device(current_platform.device_type, self.local_rank))
         data.meta_info["micro_batch_size"] = self.worker_config.infer_batch_size
 
         output = await self.strategy.generate(batch=data, generation_config=generation_config)
@@ -577,7 +581,7 @@ class CriticWorker(Worker):
             is_offload_states=is_offload_states,
             load_kwargs={"include": [OffloadStateType.model_params]},
         ):
-            data = data.to(current_platform.device_type)
+            data = data.to(torch.device(current_platform.device_type, self.local_rank))
             data.meta_info["micro_batch_size"] = self.worker_config.infer_batch_size
             with torch.no_grad():
                 results: Dict[str, torch.Tensor] = self.strategy.forward_step(
@@ -606,7 +610,7 @@ class CriticWorker(Worker):
             is_offload_states=is_offload_states,
             load_kwargs={"include": [OffloadStateType.model_params, OffloadStateType.other_params]},
         ):
-            data = data.to(current_platform.device_type)
+            data = data.to(torch.device(current_platform.device_type, self.local_rank))
             per_device_train_batch_size = self.worker_config.training_args.per_device_train_batch_size
             backward_batch_size = (
                 per_device_train_batch_size * self.worker_config.training_args.gradient_accumulation_steps
@@ -733,7 +737,7 @@ class RewardWorker(Worker):
             metric_infix=f"{self.cluster_name}/compute_rewards",
             is_offload_states=is_offload_states,
         ):
-            data = data.to(current_platform.device_type)
+            data = data.to(torch.device(current_platform.device_type, self.local_rank))
 
             # TODO: _switch_chat_template, 异构reward model
 
