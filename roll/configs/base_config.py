@@ -109,6 +109,10 @@ class BaseConfig(ScheduleConfig):
     logging_dir: str = field(
         default="./output/logs",
         metadata={"help": "Directory to store logs."})
+    auto_append_exp_timestamp: bool = field(
+        default=True,
+        metadata={"help": "Automatically append exp_name/timestamp to output_dir and logging_dir. "
+                          "Set to false when these are already included in the path (e.g. via base_ckpt_dir)."})
     rollout_dump_dir: str = field(
         default=None, metadata={"help": "saving actor_infer rollout to this dir"}
     )
@@ -268,28 +272,30 @@ class BaseConfig(ScheduleConfig):
 
 
         if self.track_with == "tensorboard":
-            self.tracker_kwargs["log_dir"] = os.path.join(
-                self.tracker_kwargs.get("log_dir", self.output_dir), self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
-            )
+            if self.auto_append_exp_timestamp:
+                self.tracker_kwargs["log_dir"] = os.path.join(
+                    self.tracker_kwargs.get("log_dir", self.output_dir), self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
+                )
             logger.info(f"add timestamp to tensorboard log_dir {self.tracker_kwargs['log_dir']}")
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.logging_dir = os.path.join(self.logging_dir, self.exp_name, timestamp)
-        self.output_dir = os.path.join(self.output_dir, self.exp_name, timestamp)
+        if self.auto_append_exp_timestamp:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.logging_dir = os.path.join(self.logging_dir, self.exp_name, timestamp)
+            self.output_dir = os.path.join(self.output_dir, self.exp_name, timestamp)
         # Set ROLL_LOG_DIR before any logger calls so the file handler writes to the correct directory
         os.environ["ROLL_LOG_DIR"] = self.logging_dir
         get_logger()
-        logger.info(f"add exp_name and timestamp to logging_dir {self.logging_dir}")
-        logger.info(f"add exp_name and timestamp to output_dir {self.output_dir}")
+        logger.info(f"logging_dir: {self.logging_dir}")
+        logger.info(f"output_dir: {self.output_dir}")
 
         if self.model_download_type is not None:
             os.environ["MODEL_DOWNLOAD_TYPE"] = self.model_download_type
 
         upload_type = self.checkpoint_config.get("type", None)
-        if upload_type == "file_system":
+        if upload_type == "file_system" and self.auto_append_exp_timestamp:
             output_dir = self.checkpoint_config.get("output_dir")
             self.checkpoint_config["output_dir"] = os.path.join(output_dir, datetime.now().strftime("%Y%m%d-%H%M%S"))
-            logger.info(f"add timestamp to output_dir {self.checkpoint_config['output_dir']}")
+            logger.info(f"checkpoint output_dir: {self.checkpoint_config['output_dir']}")
 
         for attribute_name in dir(self):
             attribute = getattr(self, attribute_name)
@@ -305,12 +311,13 @@ class BaseConfig(ScheduleConfig):
             self.profiler_timeline and self.profiler_memory
         ), f"ensure that only one profiling mode is enabled at a time"
 
-        self.profiler_output_dir = os.path.join(
-            self.profiler_output_dir, self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
-        )
-        self.length_profiler_dir = os.path.join(
-            self.length_profiler_dir, self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
-        )
+        if self.auto_append_exp_timestamp:
+            self.profiler_output_dir = os.path.join(
+                self.profiler_output_dir, self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
+            )
+            self.length_profiler_dir = os.path.join(
+                self.length_profiler_dir, self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
+            )
 
         os.environ["PROFILER_OUTPUT_DIR"] = self.profiler_output_dir
         if self.profiler_timeline:

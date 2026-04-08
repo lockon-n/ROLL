@@ -12,12 +12,14 @@ hydra:
 
 exp_name: "qwen3_5_4B_agentic_mcbots"
 
-base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}
+base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}/${now:%Y%m%d-%H%M%S}
+
+auto_append_exp_timestamp: false
 
 seed: 42
-logging_dir: ${base_ckpt_dir}/logs/${exp_name}
-output_dir: ${base_ckpt_dir}/output/${exp_name}
-render_save_dir: ${base_ckpt_dir}/render/${exp_name}
+logging_dir: ${base_ckpt_dir}/logs
+output_dir: ${base_ckpt_dir}/output
+render_save_dir: ${base_ckpt_dir}/render
 
 checkpoint_config:
   type: file_system

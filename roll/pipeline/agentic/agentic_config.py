@@ -338,11 +338,11 @@ class AgenticConfig(PPOConfig):
         self.train_env_manager.name = "train_env"
         self.val_env_manager.name = "val_env"
 
-        if self.render_save_dir:
+        if self.render_save_dir and self.auto_append_exp_timestamp:
             self.render_save_dir = os.path.join(
                 self.render_save_dir, self.exp_name, datetime.now().strftime("%Y%m%d-%H%M%S")
             )
-        logger.info(f"add timestamp to render_save_dir  {self.render_save_dir}")
+        logger.info(f"render_save_dir: {self.render_save_dir}")
 
         assert self.max_steps > 0 or self.max_steps == -1, "max_steps must be greater than 0 or -1"
 
