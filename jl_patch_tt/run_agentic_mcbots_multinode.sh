@@ -3,7 +3,8 @@ set +x
 
 unset VIRTUAL_ENV
 
-export ROLL_RAY_RUNTIME_ENV=0
+export ROLL_RAY_RUNTIME_ENV=1
+export ROLL_PLATFORM=cuda
 export MCBOTS_INITIAL_USER_INPUT="explore freely!"
 
 # todo, may be 
