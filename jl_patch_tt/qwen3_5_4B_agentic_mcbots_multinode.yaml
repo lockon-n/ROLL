@@ -21,9 +21,9 @@ seed: 42
 # output_dir: ${base_ckpt_dir}/output
 # render_save_dir: ${base_ckpt_dir}/render
 
-logging_dir: /opt/tiger/entry/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/logs
-output_dir: /opt/tiger/entry/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/output
-render_save_dir: /opt/tiger/entry/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/render
+logging_dir: /opt/tiger/entry/ROLL/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/logs
+output_dir: /opt/tiger/entry/ROLL/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/output
+render_save_dir: /opt/tiger/entry/ROLL/outputs/${exp_name}/${now:%Y%m%d-%H%M%S}/render
 
 checkpoint_config:
   type: file_system
