@@ -10,7 +10,7 @@ hydra:
     dir: .
   output_subdir: null
 
-exp_name: "qwen3_5_4B_agentic_sokoban"
+exp_name: "qwen3_5_4B_agentic_sokoban_nothink"
 seed: 42
 logging_dir: ./output/logs/${exp_name}
 output_dir: ./output/${exp_name}
@@ -31,14 +31,14 @@ chat_template_file: ../../models/Qwen/Qwen3.5-large-nodrop-thinking/chat_templat
 max_steps: 1024
 save_steps: 10
 logging_steps: 1
-eval_steps: 10
+eval_steps: 0
 resume_from_checkpoint: false
 
-rollout_batch_size: 1024
-val_batch_size: 512
-sequence_length: 8192
+rollout_batch_size: 64
+val_batch_size: 16
+sequence_length: 32768
 
-enable_thinking: true
+enable_thinking: false
 thinking_penalty: -0.2
 
 advantage_clip: 0.2
@@ -52,6 +52,8 @@ max_grad_norm: 1.0
 pretrain: /export/ssddata/junlong/models/Qwen/Qwen3.5-4B
 
 actor_train:
+  # use_dynamic_batching_in_train: true
+  # max_tokens_per_microbatch_in_train: 131072
   model_args:
     flash_attn: sdpa
     attn_implementation: sdpa
@@ -61,16 +63,19 @@ actor_train:
   training_args:
     learning_rate: 1.0e-6
     weight_decay: 0
-    per_device_train_batch_size: 2
-    gradient_accumulation_steps: 16
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 8
     warmup_steps: 10
     lr_scheduler_type: cosine
   strategy_args:
     strategy_name: megatron_train
     strategy_config:
-      tensor_model_parallel_size: 1
+      tensor_model_parallel_size: 4                                                                                                                                            
+      context_parallel_size: 1     
       pipeline_model_parallel_size: 1
       expert_model_parallel_size: 1
+      virtual_pipeline_model_parallel_size: null
+      sequence_parallel: true 
       use_distributed_optimizer: true
       recompute_granularity: full
       bf16: true
@@ -78,6 +83,7 @@ actor_train:
   infer_batch_size: 2
 
 actor_infer:
+  num_gpus_per_worker: 4
   model_args:
     disable_gradient_checkpointing: true
     dtype: bf16
@@ -91,7 +97,7 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.8
+      gpu_memory_utilization: 0.9
       block_size: 16
       load_format: auto
       enable_prefix_caching: false
@@ -118,20 +124,21 @@ reward_normalization:
 
 train_env_manager:
   format_penalty: -0.15
-  max_env_num_per_worker: 128
-  num_env_groups: 128
+
+  max_env_num_per_worker: 8
+  num_env_groups: 8
   group_size: 8
   tags: [SimpleSokoban]
-  num_groups_partition: [128]
+  num_groups_partition: [8]
 
 val_env_manager:
-  max_env_num_per_worker: 256
-  num_env_groups: 512
+  max_env_num_per_worker: 0
+  num_env_groups: 0
   group_size: 1
   tags: [SimpleSokoban, LargerSokoban, SokobanDifferentGridVocab, FrozenLake]
-  num_groups_partition: [128, 128, 128, 128]
+  num_groups_partition: [0,0,0,0]
 
-max_tokens_per_step: 1024
+max_tokens_per_step: 128
 
 custom_envs:
   SimpleSokoban:
