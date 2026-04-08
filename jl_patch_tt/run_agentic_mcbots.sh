@@ -27,7 +27,7 @@ while [ ! -f "$mc_server_runtime_config_file" ]; do
 done
 
 echo "MC server runtime config file found after $elapsed_time seconds , proceed to get MC_SERVER_PORT"
-export MC_SERVER_PORT=$(python3 -c "import json; print(json.load(open('/mnt/hdfs/.../server-runtime-0.json'))['server']['port'])")                                                
+export MC_SERVER_PORT=$(python3 -c "import json; print(json.load(open('${mc_server_runtime_config_file}'))['server']['port'])")                                                
 
 echo "MC_SERVER_HOST: ${MC_SERVER_HOST}"
 echo "MC_SERVER_PORT: ${MC_SERVER_PORT}"
