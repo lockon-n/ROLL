@@ -56,6 +56,12 @@ class Worker:
         self.rank = int(os.environ.get("RANK", 0))
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        # When RUNTIME_ENV=0, all GPUs are visible and LOCAL_RANK is the actual
+        # GPU index. Set default CUDA device so .to("cuda") resolves correctly.
+        if os.environ.get("ROLL_RAY_RUNTIME_ENV", "0") != "1":
+            import torch
+            if torch.cuda.is_available() and self.local_rank < torch.cuda.device_count():
+                torch.cuda.set_device(self.local_rank)
         self.shared_storage = SharedStorage.options(
             name=STORAGE_NAME, get_if_exists=True, namespace=RAY_NAMESPACE
         ).remote()
