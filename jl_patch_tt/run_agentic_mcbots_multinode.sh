@@ -3,9 +3,6 @@ set +x
 
 unset VIRTUAL_ENV
 
-# Stop any residual Ray cluster to avoid stale GPU mappings
-ray stop 2>/dev/null
-
 export ROLL_RAY_RUNTIME_ENV=0
 export MCBOTS_INITIAL_USER_INPUT="explore freely!"
 
