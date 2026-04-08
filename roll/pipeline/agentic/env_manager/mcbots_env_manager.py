@@ -205,6 +205,7 @@ class McbotsEnvManager(BaseEnvManager):
             self._kill_client()
             self._stop_http_server()
             self._cleanup_port_file()
+            self._cleanup_pid_file()
             # Notify output queue that this env is done (prevents pipeline hang)
             ray.get(
                 self.output_queue.put.remote(
@@ -304,6 +305,15 @@ class McbotsEnvManager(BaseEnvManager):
             os.remove(port_file)
         except OSError:
             pass
+
+    def _cleanup_pid_file(self):
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if output_dir:
+            pid_file = os.path.join(output_dir, "pids", f"agent_{self.env_id}.pid")
+            try:
+                os.remove(pid_file)
+            except OSError:
+                pass
 
     # ──────────────────────────────────────────────────────────────────────
     # MC Client Process Management
@@ -555,8 +565,10 @@ class McbotsEnvManager(BaseEnvManager):
         # Write PID to file for external cleanup
         output_dir = getattr(self.pipeline_config, "output_dir", None)
         if output_dir:
-            pid_file = os.path.join(output_dir, "mcbots_agent_pids.txt")
-            with open(pid_file, "a") as f:
+            pid_dir = os.path.join(output_dir, "pids")
+            os.makedirs(pid_dir, exist_ok=True)
+            pid_file = os.path.join(pid_dir, f"agent_{self.env_id}.pid")
+            with open(pid_file, "w") as f:
                 f.write(f"{self._agent_proc.pid}\n")
 
     def _wait_for_agent(self):
