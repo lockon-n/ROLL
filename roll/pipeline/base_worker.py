@@ -73,7 +73,11 @@ class ActorWorker(Worker):
             is_offload_states=is_offload_states,
             load_kwargs={"include": [OffloadStateType.model_params, OffloadStateType.other_params]},
         ):
-            data = data.to(torch.device(current_platform.device_type, self.local_rank))
+            target_device = torch.device(current_platform.device_type, self.local_rank)
+            self.logger.info(f"[DEBUG] train_step: local_rank={self.local_rank}, target_device={target_device}, "
+                             f"data input_ids device={data.batch['input_ids'].device if 'input_ids' in data.batch else 'N/A'}")
+            data = data.to(target_device)
+            self.logger.info(f"[DEBUG] train_step: after .to(), input_ids device={data.batch['input_ids'].device if 'input_ids' in data.batch else 'N/A'}")
             data = self.strategy.get_data_input(data)
             per_device_train_batch_size = self.worker_config.training_args.per_device_train_batch_size
             backward_batch_size = (
