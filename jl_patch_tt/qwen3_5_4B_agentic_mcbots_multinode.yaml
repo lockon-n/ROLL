@@ -132,7 +132,7 @@ reward_normalization:
 # group_size = 1 (each env is unique, no repeated rollouts)
 train_env_manager:
   num_env_workers: 2
-  max_env_num_per_worker: 4
+  max_env_num_per_worker: 2
   num_env_groups: 8
   group_size: 1
   tags: [Minecraft]
