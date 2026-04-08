@@ -13,6 +13,7 @@ mc_server_runtime_config_file="/mnt/hdfs/tiktok_aiic/user/junlongli/mcbots/share
 # we wait the above file created then proceed, max wait time is 15 mins
 MAX_WAIT_TIME=900
 start_time=$(date +%s)
+elapsed_time=0
 while [ ! -f "$mc_server_runtime_config_file" ]; do
     sleep 1
     current_time=$(date +%s)
@@ -23,7 +24,7 @@ while [ ! -f "$mc_server_runtime_config_file" ]; do
     fi
 done
 
-echo "MC server runtime config file found after $elapsed_time seconds , proceed to get MC_SERVER_PORT"
+echo "MC server runtime config file found after ${elapsed_time} seconds , proceed to get MC_SERVER_PORT"
 export MC_SERVER_PORT=$(python3 -c "import json; print(json.load(open('${mc_server_runtime_config_file}'))['server']['port'])")                                                
 
 echo "MC_SERVER_HOST: ${MC_SERVER_HOST}"
