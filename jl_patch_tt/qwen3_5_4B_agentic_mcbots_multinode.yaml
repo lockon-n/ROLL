@@ -33,8 +33,8 @@ track_with: wandb
 tracker_kwargs:
   project: qwen3_5_4B_agentic_mcbots
 
-num_gpus_per_node: ${oc.env:ARNOLD_WORKER_GPU}
-num_nodes: ${oc.env:ARNOLD_WORKER_NUM}
+num_gpus_per_node: ${oc.decode:${oc.env:ARNOLD_WORKER_GPU}}
+num_nodes: ${oc.decode:${oc.env:ARNOLD_WORKER_NUM}}
 
 chat_template_file: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-large-nodrop-thinking/chat_template.jinja
 
