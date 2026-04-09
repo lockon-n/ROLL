@@ -55,6 +55,23 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+class PromptTooLongError(Exception):
+    """Raised when an incoming chat completion request exceeds sequence_length.
+
+    The HTTP handler converts this into a 400 response with an OpenAI-compatible
+    `error.code = "context_length_exceeded"` body, so the OpenAI Python SDK on
+    the agent side raises BadRequestError and can take a recovery path.
+    """
+
+    def __init__(self, prompt_tokens: int, seq_limit: int) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.seq_limit = seq_limit
+        super().__init__(
+            f"Prompt too long ({prompt_tokens} tokens, limit {seq_limit}). "
+            f"Please trim context."
+        )
+
+
 def _extract_response_token_ranges(response_masks: List[int]) -> List[List[int]]:
     """Extract [start, end) ranges for contiguous 1-regions in response_masks."""
     ranges = []
@@ -155,6 +172,8 @@ class McbotsEnvManager(BaseEnvManager):
         self._episode_had_emission: bool = False
         self._last_client_probe_at: float = 0.0
         self._last_client_probe_result: bool = True
+        # Debug: count consecutive sequence-length rejections; reset on any successful generation
+        self._consecutive_rejections: int = 0
 
         # Config — top-level keys come from the entry dict, nested keys from entry["config"]
         self.tag = self.env_config.get("tag", "Minecraft")
@@ -224,6 +243,7 @@ class McbotsEnvManager(BaseEnvManager):
                 self.current_window_messages = []
                 self.sequence_id_counter = 0
                 self._episode_had_emission = False
+                self._consecutive_rejections = 0
                 self._last_agent_activity = time.time()
                 self._agent_started_at = time.time()
                 self._start_agent()
@@ -296,6 +316,23 @@ class McbotsEnvManager(BaseEnvManager):
                         self.end_headers()
                         self.wfile.write(json.dumps(response).encode())
                         return
+                except PromptTooLongError as e:
+                    # Return an OpenAI-compatible 400 so the SDK on the agent side
+                    # raises BadRequestError(code="context_length_exceeded"), which
+                    # gives the agent a clean signal to drop history.
+                    response = {
+                        "error": {
+                            "message": str(e),
+                            "type": "invalid_request_error",
+                            "param": "messages",
+                            "code": "context_length_exceeded",
+                        }
+                    }
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response).encode())
+                    return
                 except Exception as e:
                     manager.logger.error(f"Error handling {self.path}: {e}", exc_info=True)
                     response = {"error": str(e), "choices": []}
@@ -604,7 +641,10 @@ class McbotsEnvManager(BaseEnvManager):
         self.logger.info(
             f"env_id={self.env_id}: Starting mcbots agent "
             f"(base_url={roll_url}/v1, remote_bash={rb_host}:{rb_port}, "
-            f"log={agent_log_path})"
+            f"log={agent_log_path}) "
+            f"MCBOTS_MAX_IMAGES_IN_CONTEXT={env['MCBOTS_MAX_IMAGES_IN_CONTEXT']} "
+            f"MCBOTS_KEEP_IMAGES_ON_RESET={env['MCBOTS_KEEP_IMAGES_ON_RESET']} "
+            f"MCBOTS_MAX_LLM_REQUEST_SUCCESSES={env.get('MCBOTS_MAX_LLM_REQUEST_SUCCESSES', 'unset')}"
         )
         self._agent_log_file = open(agent_log_path, "w") if agent_log_path else None
 
@@ -775,19 +815,33 @@ class McbotsEnvManager(BaseEnvManager):
         prompt_tokens = lm_input.batch["input_ids"].shape[1]
         remaining = seq_limit - prompt_tokens
         if remaining <= 0:
+            self._consecutive_rejections += 1
+            breakdown = self._summarize_request(incoming_messages)
             self.logger.warning(
                 f"env_id={self.env_id}: prompt ({prompt_tokens} tokens) >= "
-                f"sequence_length ({seq_limit}). Emitting current window and "
-                f"returning error to agent."
+                f"sequence_length ({seq_limit}). "
+                f"streak={self._consecutive_rejections} "
+                f"messages={breakdown['num_messages']} "
+                f"roles={breakdown['role_counts']} "
+                f"images={breakdown['num_images']} "
+                f"text_chars={breakdown['text_chars']} "
+                f"system_chars={breakdown['system_chars']} "
+                f"first_user_chars={breakdown['first_user_chars']} "
+                f"last_user_chars={breakdown['last_user_chars']}. "
+                f"Emitting current window and raising context_length_exceeded to agent."
             )
+            # On the first rejection of a streak, dump the full (image-stripped) request
+            # to disk so we can inspect what's actually filling the context.
+            if self._consecutive_rejections == 1:
+                self._dump_oversize_request(incoming_messages, prompt_tokens, seq_limit, breakdown)
             # Emit the current window (ends at last assistant response, before
             # the new user messages that pushed us over the limit)
             self._emit_window_if_needed(reward=0.0)
-            return {
-                "error": f"Prompt too long ({prompt_tokens} tokens, limit {seq_limit}). "
-                         f"Please trim context.",
-                "choices": [],
-            }
+            # Raise so the HTTP handler can return a proper 400 with
+            # error.code = "context_length_exceeded". This makes the OpenAI SDK
+            # on the agent side raise BadRequestError, which the agent can use
+            # as a clean signal to hard-reset its conversation history.
+            raise PromptTooLongError(prompt_tokens, seq_limit)
 
         # ── Record messages (only after sequence length check passes) ──
         self._record_incoming_messages(incoming_messages)
@@ -831,6 +885,8 @@ class McbotsEnvManager(BaseEnvManager):
 
         # ── Record assistant response ──
         self.current_window_messages.append({"role": "assistant", "content": response_text})
+        # A successful generation breaks any rejection streak.
+        self._consecutive_rejections = 0
 
         # ── Return OpenAI-format response ──
         return {
@@ -976,6 +1032,128 @@ class McbotsEnvManager(BaseEnvManager):
     # ──────────────────────────────────────────────────────────────────────
     # Message Recording
     # ──────────────────────────────────────────────────────────────────────
+
+    def _summarize_request(self, incoming_messages: List[Dict]) -> Dict:
+        """Compute a structured breakdown of an incoming chat-completions request.
+
+        Used by the sequence-length rejection path to make oversize prompts diagnosable
+        without dumping the full body on every retry.
+        """
+        role_counts: Dict[str, int] = {}
+        num_images = 0
+        text_chars = 0
+        system_chars = 0
+        first_user_chars = 0
+        last_user_chars = 0
+        seen_first_user = False
+        for m in incoming_messages:
+            role = m.get("role", "?")
+            role_counts[role] = role_counts.get(role, 0) + 1
+            content = m.get("content")
+            msg_text_chars = 0
+            if isinstance(content, str):
+                msg_text_chars = len(content)
+            elif isinstance(content, list):
+                for c in content:
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get("type") == "image_url":
+                        num_images += 1
+                    elif c.get("type") == "text":
+                        msg_text_chars += len(c.get("text", ""))
+            text_chars += msg_text_chars
+            if role == "system":
+                system_chars += msg_text_chars
+            elif role == "user":
+                if not seen_first_user:
+                    first_user_chars = msg_text_chars
+                    seen_first_user = True
+                last_user_chars = msg_text_chars
+        return {
+            "num_messages": len(incoming_messages),
+            "role_counts": role_counts,
+            "num_images": num_images,
+            "text_chars": text_chars,
+            "system_chars": system_chars,
+            "first_user_chars": first_user_chars,
+            "last_user_chars": last_user_chars,
+        }
+
+    def _dump_oversize_request(
+        self,
+        incoming_messages: List[Dict],
+        prompt_tokens: int,
+        seq_limit: int,
+        breakdown: Dict,
+    ) -> None:
+        """Dump the offending request body (image base64 stripped) to disk for inspection.
+
+        Only called once per rejection streak to keep disk usage bounded.
+        Output: ${output_dir}/debug_oversize/env{env_id}_ep{episode_id}_seq{sequence_id}.json
+        """
+        output_dir = getattr(self.pipeline_config, "output_dir", None)
+        if not output_dir:
+            return
+        dump_dir = os.path.join(output_dir, "debug_oversize")
+        try:
+            os.makedirs(dump_dir, exist_ok=True)
+        except OSError as e:
+            self.logger.warning(f"env_id={self.env_id}: cannot create {dump_dir}: {e}")
+            return
+        dump_path = os.path.join(
+            dump_dir,
+            f"env{self.env_id}_ep{self.episode_id}_seq{self.sequence_id_counter}.json",
+        )
+        # Strip base64 image data so the dump stays human-readable
+        cleaned: List[Dict] = []
+        for m in incoming_messages:
+            cleaned_msg: Dict = {"role": m.get("role")}
+            content = m.get("content")
+            if isinstance(content, str):
+                cleaned_msg["content"] = content
+            elif isinstance(content, list):
+                cleaned_content: List[Dict] = []
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "image_url":
+                        url = c.get("image_url", {}).get("url", "")
+                        cleaned_content.append({
+                            "type": "image_url",
+                            "image_url_len": len(url),
+                            "image_url_prefix": url[:64],
+                        })
+                    else:
+                        cleaned_content.append(c)
+                cleaned_msg["content"] = cleaned_content
+            else:
+                cleaned_msg["content"] = content
+            cleaned.append(cleaned_msg)
+        try:
+            with open(dump_path, "w") as f:
+                json.dump(
+                    {
+                        "env_id": self.env_id,
+                        "bot_name": self.bot_name,
+                        "episode_id": self.episode_id,
+                        "sequence_id": self.sequence_id_counter,
+                        "prompt_tokens": prompt_tokens,
+                        "seq_limit": seq_limit,
+                        "max_images_in_context": self.max_images_in_context,
+                        "keep_images_on_reset": self.keep_images_on_reset,
+                        "breakdown": breakdown,
+                        "messages": cleaned,
+                    },
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            self.logger.warning(
+                f"env_id={self.env_id}: dumped oversize request to {dump_path}"
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"env_id={self.env_id}: failed to dump oversize request: {e}"
+            )
 
     def _record_incoming_messages(self, incoming_messages: List[Dict]):
         """

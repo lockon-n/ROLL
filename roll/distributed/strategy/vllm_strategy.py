@@ -199,10 +199,11 @@ class VllmStrategy(InferenceStrategy):
                 if ttft is None:
                     ttft = time.perf_counter() - start
                 output = result
-        except Exception as e:
+        except BaseException as e:
             logger.warning(
                 f"[vllm warmup] {self.worker.cluster_name} rank={self.worker.rank} "
-                f"warmup failed: {e}"
+                f"warmup failed: type={type(e).__name__} repr={e!r}",
+                exc_info=True,
             )
             return
 
