@@ -362,6 +362,18 @@ class AgenticConfig(PPOConfig):
         logger.info(f"train_env_manager.max_traj_per_env: {self.train_env_manager.max_traj_per_env}")
         assert self.train_env_manager.max_traj_per_env >= traj_per_env, f"max_traj_per_env must be >= {traj_per_env}"
 
+        # Inform when streaming lazy mode will rotate envs through the semaphore
+        concurrent_capacity = (
+            self.train_env_manager.world_size * self.train_env_manager.max_env_num_per_worker
+        )
+        total_envs = self.train_env_manager.num_env_groups * self.train_env_manager.final_group_size
+        if concurrent_capacity > 0 and total_envs > concurrent_capacity:
+            logger.info(
+                f"total_envs ({total_envs}) > concurrent_capacity ({concurrent_capacity}). "
+                f"Streaming lazy mode active: envs will rotate, each producing "
+                f"{self.train_env_manager.max_traj_per_env} trajectories per session."
+            )
+
         # Validate rollout_batch_size is compatible with group_size
         # The scheduler collects trajectories in complete groups to maintain variance reduction properties
         if self.rollout_batch_size > 0:  # Skip validation if negative (unlimited batch)

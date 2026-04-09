@@ -11,7 +11,11 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Keep a GPU busy with repeated random matrix multiplications."
     )
-    parser.add_argument("--device", default="cuda", help="Torch device, e.g. cuda or cuda:0.")
+    parser.add_argument(
+        "--device",
+        default="cuda",
+        help="Torch device, e.g. cuda, cuda:0, or 'all' to spawn one worker per visible GPU.",
+    )
     parser.add_argument(
         "--dtype",
         default="float16",
@@ -82,6 +86,31 @@ def _parse_device_index(device_str: str) -> int:
     return 0
 
 
+def _strip_device_arg(argv):
+    """Remove --device <value> and --device=<value> entries from an argv list."""
+    result = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--device":
+            i += 2  # skip the flag and its value
+            continue
+        if a.startswith("--device="):
+            i += 1
+            continue
+        result.append(a)
+        i += 1
+    return result
+
+
+def _has_arg(argv, name: str) -> bool:
+    """Return True if --name or --name=... is present in argv."""
+    for a in argv:
+        if a == name or a.startswith(name + "="):
+            return True
+    return False
+
+
 def _init_nvml_handle(device_index: int):
     """Try to initialize pynvml and return a device handle, or None on failure."""
     try:
@@ -135,8 +164,62 @@ def sleep_for_target_util(busy_time_s, target_util):
     return busy_time_s * ((1.0 / target_util) - 1.0)
 
 
+def run_all_devices(argv):
+    """Spawn one child process per visible GPU and forward signals to them."""
+    try:
+        import torch
+    except ImportError:
+        print("PyTorch is required: pip install torch", file=sys.stderr)
+        return 1
+
+    if not torch.cuda.is_available():
+        print("CUDA is not available. This script is intended for GPU use.", file=sys.stderr)
+        return 2
+
+    num_gpus = torch.cuda.device_count()
+    if num_gpus == 0:
+        print("No CUDA devices found.", file=sys.stderr)
+        return 2
+
+    forwarded = _strip_device_arg(argv)
+    # When fanning out across many GPUs, default to a much less chatty
+    # report cadence so the terminal isn't flooded.
+    if not _has_arg(forwarded, "--report-every"):
+        forwarded += ["--report-every", "500"]
+    base_cmd = [sys.executable, sys.argv[0]]
+
+    print(f"Launching GPU burner on {num_gpus} CUDA device(s)...")
+    children = []
+    for gpu_idx in range(num_gpus):
+        cmd = base_cmd + forwarded + ["--device", f"cuda:{gpu_idx}"]
+        proc = subprocess.Popen(cmd)
+        children.append(proc)
+        print(f"  cuda:{gpu_idx} -> pid {proc.pid}")
+
+    def handle_stop(signum, _frame):
+        print(f"\nReceived signal {signum}, stopping all children...")
+        for proc in children:
+            try:
+                proc.send_signal(signum)
+            except ProcessLookupError:
+                pass
+
+    signal.signal(signal.SIGINT, handle_stop)
+    signal.signal(signal.SIGTERM, handle_stop)
+
+    rc = 0
+    for proc in children:
+        proc.wait()
+        if proc.returncode != 0:
+            rc = proc.returncode
+    return rc
+
+
 def main():
     args = parse_args()
+
+    if args.device == "all":
+        return run_all_devices(sys.argv[1:])
 
     if args.sleep < 0:
         print("--sleep must be >= 0.", file=sys.stderr)

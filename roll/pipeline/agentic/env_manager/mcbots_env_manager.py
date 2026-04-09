@@ -136,7 +136,7 @@ class McbotsEnvManager(BaseEnvManager):
 
         # State (minimal — no conversation management)
         self.current_window_messages: List[Dict] = []
-        self.episode_id: int = 0
+        self.episode_id: Optional[int] = None
         self.sequence_id_counter: int = 0
         self.group_seed: int = 0
         self.http_port: int = 0
@@ -148,6 +148,13 @@ class McbotsEnvManager(BaseEnvManager):
         self._agent_proc: Optional[subprocess.Popen] = None
         self._agent_log_file = None
         self._runtime_config: Optional[Dict] = None
+
+        # Robustness tracking
+        self._last_agent_activity: float = 0.0
+        self._agent_started_at: float = 0.0
+        self._episode_had_emission: bool = False
+        self._last_client_probe_at: float = 0.0
+        self._last_client_probe_result: bool = True
 
         # Config — top-level keys come from the entry dict, nested keys from entry["config"]
         self.tag = self.env_config.get("tag", "Minecraft")
@@ -165,6 +172,10 @@ class McbotsEnvManager(BaseEnvManager):
         self.max_images_in_context = cfg.get("max_images_in_context", 80)
         self.keep_images_on_reset = cfg.get("keep_images_on_reset", 20)
         self.bot_name = cfg.get("bot_name", f"Bot{self.env_id}")
+        # Robustness timeouts
+        self.agent_idle_timeout = cfg.get("agent_idle_timeout", 600)  # max time without HTTP activity from agent
+        self.agent_max_runtime = cfg.get("agent_max_runtime", 1800)  # hard cap per episode
+        self.client_probe_interval = cfg.get("client_probe_interval", 30)  # throttle MC client health probes
 
     # ──────────────────────────────────────────────────────────────────────
     # Main loop
@@ -174,7 +185,6 @@ class McbotsEnvManager(BaseEnvManager):
         assert "seed" in data.meta_info
         self.running = True
         self.group_seed = data.meta_info["seed"] + self.env_config.get("group_seed", 0)
-        self.episode_id = 0
         self.sequence_id_counter = 0
         self.current_window_messages = []
 
@@ -188,18 +198,57 @@ class McbotsEnvManager(BaseEnvManager):
         # Write port to discoverable file
         self._write_port_file()
 
-        try:
-            # Start MC client and wait for readiness
-            self._ensure_client_running()
+        # Get first episode slot from scheduler
+        self.episode_id = ray.get(
+            self.output_queue.get_episode_id.remote(
+                self.group_id, self.env_id, blocking=not self.non_blocking
+            )
+        )
 
-            # Episode loop: start agent, wait for it to finish, repeat
-            while self.running:
+        try:
+            while self.running and self.episode_id is not None:
+                # 1. Health: ensure HTTP server is alive
+                if self._server_thread is None or not self._server_thread.is_alive():
+                    self.logger.warning(
+                        f"env_id={self.env_id}: HTTP server dead, restarting"
+                    )
+                    self._stop_http_server()
+                    self.http_port = _find_free_port()
+                    self._start_http_server()
+                    self._write_port_file()
+
+                # 2. Health: ensure MC client is alive (raises on startup-timeout)
                 self._ensure_client_running()
-                # Reset window state for new episode (agent may have crashed without
-                # calling /episode_done, leaving stale messages)
+
+                # 3. Reset per-episode state and start agent
                 self.current_window_messages = []
+                self.sequence_id_counter = 0
+                self._episode_had_emission = False
+                self._last_agent_activity = time.time()
+                self._agent_started_at = time.time()
                 self._start_agent()
-                self._wait_for_agent()
+
+                # 4. Wait with timeouts and health checks
+                exit_reason = self._wait_for_agent()
+
+                # 5. Release the episode slot if no window was emitted
+                if not self._episode_had_emission:
+                    self.logger.warning(
+                        f"env_id={self.env_id}: episode {self.episode_id} ended without emission "
+                        f"(reason={exit_reason}); releasing slot"
+                    )
+                    ray.get(
+                        self.output_queue.put.remote(
+                            self.group_id, self.episode_id, self.current_step, None, self.env_id
+                        )
+                    )
+
+                # 6. Get next episode slot from scheduler (None → exit loop)
+                self.episode_id = ray.get(
+                    self.output_queue.get_episode_id.remote(
+                        self.group_id, self.env_id, blocking=not self.non_blocking
+                    )
+                )
         finally:
             self._kill_agent()
             self._kill_client()
@@ -207,11 +256,12 @@ class McbotsEnvManager(BaseEnvManager):
             self._cleanup_port_file()
             self._cleanup_pid_file()
             # Notify output queue that this env is done (prevents pipeline hang)
-            ray.get(
-                self.output_queue.put.remote(
-                    self.group_id, self.episode_id, self.current_step, None, self.env_id
+            if self.episode_id is not None:
+                ray.get(
+                    self.output_queue.put.remote(
+                        self.group_id, self.episode_id, self.current_step, None, self.env_id
+                    )
                 )
-            )
 
     def stop(self):
         self.running = False
@@ -452,6 +502,21 @@ class McbotsEnvManager(BaseEnvManager):
         except Exception:
             return False
 
+    def _is_mc_client_alive(self) -> bool:
+        """Throttled MC client health check for use inside the agent-wait poll loop.
+
+        Probes at most once every ``self.client_probe_interval`` seconds and caches
+        the result, so calling this on a 1Hz poll loop has minimal overhead.
+        """
+        if self._runtime_config is None:
+            return False
+        now = time.time()
+        if now - self._last_client_probe_at < self.client_probe_interval:
+            return self._last_client_probe_result
+        self._last_client_probe_at = now
+        self._last_client_probe_result = self._check_client_health()
+        return self._last_client_probe_result
+
     def _kill_client(self):
         """Terminate MC client Java process."""
         if self._client_java_pid is not None:
@@ -571,37 +636,91 @@ class McbotsEnvManager(BaseEnvManager):
             with open(pid_file, "w") as f:
                 f.write(f"{self._agent_proc.pid}\n")
 
-    def _wait_for_agent(self):
-        """Wait for agent subprocess to exit. Log if it crashed."""
+    def _log_agent_crash(self, retcode: int):
+        """Log the tail of the agent log when it exits with a non-zero status."""
+        output = ""
+        if self._agent_log_file is not None:
+            self._agent_log_file.flush()
+            try:
+                with open(self._agent_log_file.name) as f:
+                    output = f.read()[-1000:]
+            except OSError:
+                pass
+        elif self._agent_proc is not None and self._agent_proc.stdout:
+            output = self._agent_proc.stdout.read().decode(errors="replace")[-1000:]
+        self.logger.warning(
+            f"env_id={self.env_id}: mcbots agent exited with code {retcode}. "
+            f"Last output: {output}"
+        )
+
+    def _wait_for_agent(self) -> str:
+        """Wait for the mcbots agent to exit, with timeouts and health checks.
+
+        Returns one of:
+            "normal"        — agent exited cleanly (retcode 0) or self.running became False
+            "crashed"       — agent exited with non-zero code
+            "idle_timeout"  — agent made no HTTP progress within agent_idle_timeout
+            "max_runtime"   — agent ran longer than agent_max_runtime
+            "http_dead"     — local HTTP server thread died
+            "client_dead"   — MC client health check failed mid-rollout
+        """
         if self._agent_proc is None:
-            return
+            return "normal"
         try:
             while self.running:
+                # 1. Process exited
                 retcode = self._agent_proc.poll()
                 if retcode is not None:
                     if retcode != 0:
-                        # Read last output from log file or pipe
-                        output = ""
-                        if self._agent_log_file is not None:
-                            self._agent_log_file.flush()
-                            try:
-                                with open(self._agent_log_file.name) as f:
-                                    output = f.read()[-1000:]
-                            except OSError:
-                                pass
-                        elif self._agent_proc.stdout:
-                            output = self._agent_proc.stdout.read().decode(errors="replace")[-1000:]
-                        self.logger.warning(
-                            f"env_id={self.env_id}: mcbots agent exited with code {retcode}. "
-                            f"Last output: {output}"
-                        )
-                    else:
-                        self.logger.info(f"env_id={self.env_id}: mcbots agent finished normally")
+                        self._log_agent_crash(retcode)
+                        self._agent_proc = None
+                        return "crashed"
+                    self.logger.info(
+                        f"env_id={self.env_id}: mcbots agent finished normally"
+                    )
                     self._agent_proc = None
-                    return
+                    return "normal"
+
+                # 2. HTTP server died
+                if self._server_thread is None or not self._server_thread.is_alive():
+                    self.logger.error(
+                        f"env_id={self.env_id}: HTTP server died, killing agent"
+                    )
+                    self._kill_agent()
+                    return "http_dead"
+
+                # 3. MC client died (throttled probe)
+                if not self._is_mc_client_alive():
+                    self.logger.error(
+                        f"env_id={self.env_id}: MC client died, killing agent"
+                    )
+                    self._kill_agent()
+                    return "client_dead"
+
+                # 4. Agent idle (no HTTP activity within timeout)
+                idle = time.time() - self._last_agent_activity
+                if idle > self.agent_idle_timeout:
+                    self.logger.warning(
+                        f"env_id={self.env_id}: agent idle for {idle:.0f}s "
+                        f"(timeout={self.agent_idle_timeout}s), killing"
+                    )
+                    self._kill_agent()
+                    return "idle_timeout"
+
+                # 5. Hard runtime cap
+                runtime = time.time() - self._agent_started_at
+                if runtime > self.agent_max_runtime:
+                    self.logger.warning(
+                        f"env_id={self.env_id}: agent runtime {runtime:.0f}s exceeded "
+                        f"max ({self.agent_max_runtime}s), killing"
+                    )
+                    self._kill_agent()
+                    return "max_runtime"
+
                 time.sleep(1.0)
-            # If self.running became False, kill the agent
+            # self.running became False
             self._kill_agent()
+            return "normal"
         finally:
             if self._agent_log_file is not None:
                 self._agent_log_file.close()
@@ -626,6 +745,7 @@ class McbotsEnvManager(BaseEnvManager):
 
     def _handle_chat_completion(self, request: Dict) -> Dict:
         """Handle POST /v1/chat/completions — OpenAI-compatible generation."""
+        self._last_agent_activity = time.time()
         incoming_messages = request.get("messages", [])
         if not incoming_messages:
             return {"error": "No messages provided"}
@@ -746,6 +866,7 @@ class McbotsEnvManager(BaseEnvManager):
 
     def _handle_window_complete(self, request: Dict) -> Dict:
         """Handle POST /window_complete — emit current context window as DataProto."""
+        self._last_agent_activity = time.time()
         reward = request.get("reward", 0.0)
 
         # Check if there's anything to emit
@@ -781,6 +902,7 @@ class McbotsEnvManager(BaseEnvManager):
                 self.group_id, self.episode_id, self.current_step, dataproto, self.env_id
             )
         )
+        self._episode_had_emission = True
 
         self.logger.info(
             f"Emitted window: env_id={self.env_id} episode={self.episode_id} "
@@ -833,7 +955,9 @@ class McbotsEnvManager(BaseEnvManager):
             pass
 
     def _handle_episode_done(self, request: Dict) -> Dict:
-        """Handle POST /episode_done — emit final window and reset for next episode."""
+        """Handle POST /episode_done — emit final window. The agent process exits
+        after this; the next episode_id is fetched from the scheduler in run_rollout_loop."""
+        self._last_agent_activity = time.time()
         reward = request.get("reward", 0.0)
 
         # Emit final window if non-empty
@@ -842,8 +966,7 @@ class McbotsEnvManager(BaseEnvManager):
         if self.current_window_messages and has_assistant:
             result = self._handle_window_complete({"reward": reward})
 
-        # Reset for next episode
-        self.episode_id += 1
+        # Reset window state; episode_id stays — next one is fetched in main loop
         self.sequence_id_counter = 0
         self.current_window_messages = []
 
