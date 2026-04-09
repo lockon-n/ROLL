@@ -10,7 +10,7 @@ hydra:
     dir: .
   output_subdir: null
 
-exp_name: "qwen3_5_4B_agentic_mcbots"
+exp_name: "qwen3_5_9B_agentic_mcbots"
 
 base_ckpt_dir: /mnt/hdfs/tiktok_aiic/user/junlongli/checkpoints/test_roll_multinode/${exp_name}/${now:%Y%m%d-%H%M%S}
 
@@ -31,7 +31,7 @@ checkpoint_config:
 
 track_with: wandb
 tracker_kwargs:
-  project: qwen3_5_4B_agentic_mcbots
+  project: qwen3_5_9B_agentic_mcbots
 
 num_gpus_per_node: 4
 
@@ -57,7 +57,7 @@ whiten_advantages: true
 entropy_loss_coef: 0
 max_grad_norm: 1.0
 
-pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-4B
+pretrain: /mnt/hdfs/tiktok_aiic/user/junlongli/models/Qwen/Qwen3.5-9B
 
 actor_train:
   model_args:
