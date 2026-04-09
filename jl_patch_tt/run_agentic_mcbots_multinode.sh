@@ -7,6 +7,8 @@ export ROLL_RAY_RUNTIME_ENV=1
 export ROLL_PLATFORM=cuda
 export MCBOTS_INITIAL_USER_INPUT="explore freely!"
 
+export TOTAL_NUM_OF_GPUS=$((${ARNOLD_WORKER_GPU}*${ARNOLD_WORKER_NUM}))
+
 # todo, may be 
 export MC_SERVER_HOST=${ARNOLD_MCSERVER_0_HOST}
 mc_server_runtime_config_file="/mnt/hdfs/tiktok_aiic/user/junlongli/mcbots/shared/server-runtime-${ARNOLD_TRIAL_START_TIME}.json"
