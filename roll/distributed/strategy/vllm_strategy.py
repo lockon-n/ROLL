@@ -2,6 +2,7 @@ import asyncio
 import copy
 import gc
 import os
+import time
 from collections import deque
 from typing import Dict, List, Optional
 from packaging.version import Version
@@ -140,11 +141,79 @@ class VllmStrategy(InferenceStrategy):
 
         self.is_model_in_gpu = True
 
+        await self._warmup_engine()
+
         try:
             from vllm.v1.metrics.reader import get_metrics_snapshot
             self._metrics_task = asyncio.create_task(self._collect_metrics_snapshot())
         except Exception as e:
             logger.warning(f"Failed to create metrics collector task: {e}")
+
+    async def _warmup_engine(self) -> None:
+        """Send a tiny generation request to trigger lazy CUDA graph / kernel
+        compilation in the vLLM engine, so the first real rollout request does
+        not pay this cost. Logs TTFT and total response time."""
+        prompt_text = "hello world"
+        # Apply chat template when the tokenizer has one (matches real rollout
+        # traffic for instruct models); otherwise fall back to raw encoding so
+        # base models still warm up. Source enable_thinking from pipeline_config
+        # when present (agentic pipelines) so the warmup mirrors real traffic;
+        # default to False for pipelines (e.g. RLVR) that don't define it.
+        enable_thinking = getattr(self.worker.pipeline_config, "enable_thinking", False)
+        try:
+            prompt_token_ids = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt_text}],
+                add_generation_prompt=True,
+                tokenize=True,
+                enable_thinking=enable_thinking,
+            )
+            templated = True
+        except Exception:
+            prompt_token_ids = self.tokenizer.encode(prompt_text)
+            templated = False
+        prompt = TokensPrompt(prompt_token_ids=prompt_token_ids)
+        sampling_params = SamplingParams(
+            max_tokens=10,
+            temperature=0.0,
+            output_kind=RequestOutputKind.CUMULATIVE,  # needed to observe TTFT
+        )
+        request_id = f"warmup-{random_uuid()}"
+
+        logger.info(
+            f"[vllm warmup] {self.worker.cluster_name} rank={self.worker.rank} "
+            f"sending warmup request '{prompt_text}' "
+            f"(chat_template={'yes' if templated else 'no'}, "
+            f"enable_thinking={enable_thinking}, "
+            f"prompt_tokens={len(prompt_token_ids)}, max_tokens=10)"
+        )
+
+        start = time.perf_counter()
+        ttft: Optional[float] = None
+        output: Optional[RequestOutput] = None
+        try:
+            async for result in self.model.generate(
+                prompt=prompt,
+                sampling_params=sampling_params,
+                request_id=request_id,
+            ):
+                if ttft is None:
+                    ttft = time.perf_counter() - start
+                output = result
+        except Exception as e:
+            logger.warning(
+                f"[vllm warmup] {self.worker.cluster_name} rank={self.worker.rank} "
+                f"warmup failed: {e}"
+            )
+            return
+
+        total = time.perf_counter() - start
+        num_tokens = len(output.outputs[0].token_ids) if output and output.outputs else 0
+        ttft_str = f"{ttft * 1000:.2f}ms" if ttft is not None else "N/A"
+        logger.info(
+            f"[vllm warmup] {self.worker.cluster_name} rank={self.worker.rank} "
+            f"complete: ttft={ttft_str}, total_time={total * 1000:.2f}ms, "
+            f"tokens_generated={num_tokens}"
+        )
 
     def op_compute_log_probs(self, logits: torch.Tensor, input_ids: torch.Tensor, attention_mask: torch.Tensor):
         """

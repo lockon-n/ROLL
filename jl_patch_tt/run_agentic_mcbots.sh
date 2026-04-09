@@ -32,4 +32,4 @@ export MC_SERVER_PORT=$(python3 -c "import json; print(json.load(open('${mc_serv
 echo "MC_SERVER_HOST: ${MC_SERVER_HOST}"
 echo "MC_SERVER_PORT: ${MC_SERVER_PORT}"
 
-python examples/start_agentic_pipeline.py --config_path ../jl_patch_tt --config_name qwen3_5_9B_agentic_mcbots
+python examples/start_agentic_pipeline.py --config_path ../jl_patch_tt --config_name qwen3_5_4B_agentic_mcbots
