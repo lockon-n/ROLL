@@ -251,6 +251,28 @@ class McbotsEnvManager(BaseEnvManager):
                 # 4. Wait with timeouts and health checks
                 exit_reason = self._wait_for_agent()
 
+                # 4b. Always surface why the agent exited, and persist it next
+                # to agent.log so the record dir is self-contained.
+                log_fn = self.logger.info if exit_reason == "normal" else self.logger.warning
+                log_fn(
+                    f"env_id={self.env_id}: episode {self.episode_id} agent exited "
+                    f"(reason={exit_reason})"
+                )
+                output_dir = getattr(self.pipeline_config, "output_dir", None)
+                if output_dir:
+                    record_dir = os.path.join(
+                        output_dir, "mcbots_records",
+                        self.bot_name, f"ep{self.episode_id}",
+                    )
+                    try:
+                        os.makedirs(record_dir, exist_ok=True)
+                        with open(os.path.join(record_dir, "exit_reason.txt"), "w") as f:
+                            f.write(f"{exit_reason}\n")
+                    except OSError as e:
+                        self.logger.warning(
+                            f"env_id={self.env_id}: failed to write exit_reason.txt: {e}"
+                        )
+
                 # 5. Release the episode slot if no window was emitted
                 if not self._episode_had_emission:
                     self.logger.warning(
