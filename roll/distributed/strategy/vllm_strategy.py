@@ -217,11 +217,12 @@ class VllmStrategy(InferenceStrategy):
 
         total = time.perf_counter() - start
         num_tokens = len(output.outputs[0].token_ids) if output and output.outputs else 0
+        generated_text = output.outputs[0].text if output and output.outputs else ""
         ttft_str = f"{ttft * 1000:.2f}ms" if ttft is not None else "N/A"
         logger.info(
             f"[vllm warmup] {self.worker.cluster_name} rank={self.worker.rank} "
             f"complete: ttft={ttft_str}, total_time={total * 1000:.2f}ms, "
-            f"tokens_generated={num_tokens}"
+            f"tokens_generated={num_tokens}, generated_text={generated_text!r}"
         )
 
     def op_compute_log_probs(self, logits: torch.Tensor, input_ids: torch.Tensor, attention_mask: torch.Tensor):
