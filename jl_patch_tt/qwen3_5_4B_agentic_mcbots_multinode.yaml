@@ -48,7 +48,7 @@ rollout_batch_size: 128
 val_batch_size: 16
 sequence_length: 32768
 
-enable_thinking: false
+enable_thinking: true
 
 advantage_clip: 0.2
 ppo_epochs: 1
