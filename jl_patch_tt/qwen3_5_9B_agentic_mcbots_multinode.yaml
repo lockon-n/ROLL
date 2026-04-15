@@ -162,7 +162,11 @@ custom_envs:
       mc_server_host: ${oc.env:MC_SERVER_HOST}
       mc_server_port: ${oc.env:MC_SERVER_PORT,20000}
       render_mode: cpu
+      agent_idle_timeout: 60
+      agent_max_runtime: 600
       client_health_check_timeout: 180
       agent_max_llm_successes: 5
       max_images_in_context: 30
       keep_images_on_reset: 5
+      auto_respawn: true
+      auto_respawn_interval: 2.0
