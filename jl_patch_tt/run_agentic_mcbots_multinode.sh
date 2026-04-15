@@ -5,7 +5,7 @@ unset VIRTUAL_ENV
 
 export ROLL_RAY_RUNTIME_ENV=1
 export ROLL_PLATFORM=cuda
-export MCBOTS_INITIAL_USER_INPUT="explore freely!"
+# export MCBOTS_INITIAL_USER_INPUT="explore freely!"
 
 export TOTAL_NUM_OF_GPUS=$((${ARNOLD_WORKER_GPU}*${ARNOLD_WORKER_NUM}))
 
