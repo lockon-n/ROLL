@@ -630,7 +630,7 @@ class McbotsEnvManager(BaseEnvManager):
         record_dir = ""
         output_dir = getattr(self.pipeline_config, "output_dir", None)
         if output_dir:
-            record_dir = os.path.join(output_dir, "mcbots_records", f"{self.bot_name}_ep{self.episode_id}")
+            record_dir = os.path.join(output_dir, "mcbots_records", self.bot_name, f"ep{self.episode_id}")
             os.makedirs(record_dir, exist_ok=True)
 
         # Workspace and display from runtime config
@@ -655,7 +655,7 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_WORKSPACE_ROOT": workspace_root,
             "MCBOTS_DISPLAY": display,
             "MCBOTS_LOG_FILE_PATH": game_log_path,
-            "MCBOTS_RECORD_VIDEO": "false",
+            "MCBOTS_RECORD_VIDEO": os.environ.get("MCBOTS_RECORD_VIDEO", "false"),
             "MCBOTS_MAX_IMAGES_IN_CONTEXT": str(self.max_images_in_context),
             "MCBOTS_KEEP_IMAGES_ON_RESET": str(self.keep_images_on_reset),
             "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
@@ -1010,7 +1010,7 @@ class McbotsEnvManager(BaseEnvManager):
             return
         record_dir = os.path.join(
             output_dir, "mcbots_records",
-            f"{self.bot_name}_ep{self.episode_id}"
+            self.bot_name, f"ep{self.episode_id}"
         )
         os.makedirs(record_dir, exist_ok=True)
         window_file = os.path.join(record_dir, f"window_{self.sequence_id_counter}.json")
