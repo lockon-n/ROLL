@@ -297,6 +297,35 @@ class McbotsEnvManager(BaseEnvManager):
             def log_message(self, format, *args):
                 pass  # suppress default stderr logging
 
+            def handle_one_request(self):
+                # Attribute BrokenPipe/ConnectionReset: if the agent has exited or
+                # the manager is tearing down, the disconnect is expected → DEBUG.
+                # Otherwise the peer died while supposedly alive → WARNING so real
+                # anomalies (OOM kill, network failure, rogue peer) stay visible.
+                # Lifecycle recovery is left to _monitor_agent's state machine.
+                try:
+                    super().handle_one_request()
+                except (BrokenPipeError, ConnectionResetError) as e:
+                    self.close_connection = True
+                    proc = manager._agent_proc
+                    expected = (
+                        not manager.running
+                        or proc is None
+                        or proc.poll() is not None
+                    )
+                    where = f"{getattr(self, 'command', '?')} {getattr(self, 'path', '?')}"
+                    if expected:
+                        manager.logger.debug(
+                            f"env_id={manager.env_id}: client closed during {where} "
+                            f"(agent exiting/exited): {e}"
+                        )
+                    else:
+                        manager.logger.warning(
+                            f"env_id={manager.env_id}: unexpected disconnect during "
+                            f"{where} while agent still running "
+                            f"(pid={proc.pid}): {e}"
+                        )
+
             def do_POST(self):
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length) if content_length > 0 else b""

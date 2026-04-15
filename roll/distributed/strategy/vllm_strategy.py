@@ -160,16 +160,24 @@ class VllmStrategy(InferenceStrategy):
         # when present (agentic pipelines) so the warmup mirrors real traffic;
         # default to False for pipelines (e.g. RLVR) that don't define it.
         enable_thinking = getattr(self.worker.pipeline_config, "enable_thinking", False)
+        # Render with tokenize=False, then encode separately. Some tokenizers
+        # (e.g. Qwen3 TokenizersBackend) return a BatchEncoding from
+        # apply_chat_template(tokenize=True) instead of list[int], which
+        # breaks vLLM's input validation (iterates dict keys as strings).
         try:
-            prompt_token_ids = self.tokenizer.apply_chat_template(
+            rendered = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt_text}],
                 add_generation_prompt=True,
-                tokenize=True,
+                tokenize=False,
                 enable_thinking=enable_thinking,
             )
+            prompt_token_ids = self.tokenizer.encode(rendered, add_special_tokens=False)
             templated = True
         except Exception:
             prompt_token_ids = self.tokenizer.encode(prompt_text)
+            templated = False
+        if not (isinstance(prompt_token_ids, list) and all(isinstance(t, int) for t in prompt_token_ids)):
+            prompt_token_ids = list(self.tokenizer.encode(prompt_text))
             templated = False
         prompt = TokensPrompt(prompt_token_ids=prompt_token_ids)
         sampling_params = SamplingParams(

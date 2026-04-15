@@ -45,7 +45,7 @@ logging_steps: 1
 eval_steps: 0
 resume_from_checkpoint: false
 
-rollout_batch_size: 128
+rollout_batch_size: 32
 val_batch_size: 16
 sequence_length: 32768
 
@@ -105,7 +105,7 @@ actor_infer:
   strategy_args:
     strategy_name: vllm
     strategy_config:
-      gpu_memory_utilization: 0.9
+      gpu_memory_utilization: 0.7
       block_size: 16
       load_format: auto
       enable_prefix_caching: false
