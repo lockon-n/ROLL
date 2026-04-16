@@ -171,5 +171,5 @@ custom_envs:
       auto_respawn: true
       auto_respawn_interval: 2.0
       frame_keepalive_sec: 30
-      record_video: true
+      record_video: false
       debug_random_reward: true
