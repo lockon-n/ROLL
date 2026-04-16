@@ -260,6 +260,8 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
 
     device = torch.device(args.device)
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
     dtype = resolve_dtype(torch, args.dtype)
     target_util = None if args.util is None else (args.util / 100.0)
 
@@ -335,9 +337,9 @@ def main():
         sample_interval = 1.0  # match nvidia's ~1s reporting window
         smoothed_util = float(query_util())
         last_gpu_util = smoothed_util
-        ema_alpha = 0.3
+        ema_alpha = 0.3  # display-only smoothing
         dead_zone = 3.0  # ±3% dead zone
-        duty_gain = 0.008  # duty cycle adjustment per 1% gap
+        duty_gain = 0.01  # duty cycle step per 1% gap (50% gap -> 0.5 step)
         zero_since = None  # timestamp when util first dropped to ~0
         emergency_threshold = 300.0  # 5 minutes
 
@@ -350,7 +352,7 @@ def main():
                 smoothed_util = ema_alpha * raw_util + (1.0 - ema_alpha) * smoothed_util
                 last_gpu_util = smoothed_util
                 last_sample_time = now_t
-                gap = smoothed_util - args.util  # positive = too busy
+                gap = raw_util - args.util  # positive = too busy; use raw for responsive control
 
                 # Emergency: if util ~0 for 5min, jump to target duty
                 if raw_util < 1.0:
@@ -366,7 +368,7 @@ def main():
 
                 if abs(gap) > dead_zone:
                     # Decrease duty when over target, increase when under
-                    duty_cycle = max(min(duty_cycle - gap * duty_gain * 0.01, 1.0), 0.0)
+                    duty_cycle = max(min(duty_cycle - gap * duty_gain, 1.0), 0.0)
                 # Convert duty cycle to sleep time
                 if duty_cycle <= 0.0:
                     # GPU fully busy, pause and just keep checking
