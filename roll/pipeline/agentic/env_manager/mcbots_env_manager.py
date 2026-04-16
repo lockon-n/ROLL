@@ -278,7 +278,39 @@ class McbotsEnvManager(BaseEnvManager):
                             f"env_id={self.env_id}: failed to write exit_reason.txt: {e}"
                         )
 
-                # 5. Release the episode slot if no window was emitted
+                # 5. Always salvage a window on abnormal exit so the group
+                # never ends up all-None (which stalls get_batch when the
+                # missing trajectory is needed to reach batch_size). Pad with
+                # synthetic user/assistant turns so _formulate_dataproto has
+                # response tokens to attach the fallback reward to.
+                if exit_reason != "normal" and not self._episode_had_emission:
+                    salvage_messages = list(self.current_window_messages)
+                    has_user = any(m.get("role") == "user" for m in salvage_messages)
+                    has_assistant = any(m.get("role") == "assistant" for m in salvage_messages)
+                    if not has_user:
+                        salvage_messages.append(
+                            {"role": "user", "content": f"[episode terminated: {exit_reason}]"}
+                        )
+                    if not has_assistant:
+                        salvage_messages.append(
+                            {"role": "assistant", "content": f"[agent exited: {exit_reason}]"}
+                        )
+                    self.current_window_messages = salvage_messages
+                    try:
+                        self._handle_window_complete({"reward": 0.0})
+                        self.logger.warning(
+                            f"env_id={self.env_id}: salvaged window for episode "
+                            f"{self.episode_id} after {exit_reason} "
+                            f"(synthetic_user={not has_user}, synthetic_assistant={not has_assistant})"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"env_id={self.env_id}: salvage emit failed for "
+                            f"episode {self.episode_id} ({exit_reason}): {e}",
+                            exc_info=True,
+                        )
+
+                # 6. Release the episode slot if no window was emitted
                 if not self._episode_had_emission:
                     self.logger.warning(
                         f"env_id={self.env_id}: episode {self.episode_id} ended without emission "
@@ -290,7 +322,7 @@ class McbotsEnvManager(BaseEnvManager):
                         )
                     )
 
-                # 6. Get next episode slot from scheduler (None → exit loop)
+                # 7. Get next episode slot from scheduler (None → exit loop)
                 self.episode_id = ray.get(
                     self.output_queue.get_episode_id.remote(
                         self.group_id, self.env_id, blocking=not self.non_blocking
