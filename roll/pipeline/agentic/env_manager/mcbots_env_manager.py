@@ -192,6 +192,9 @@ class McbotsEnvManager(BaseEnvManager):
         self.keep_images_on_reset = cfg.get("keep_images_on_reset", 20)
         self.auto_respawn = cfg.get("auto_respawn", False)
         self.auto_respawn_interval = cfg.get("auto_respawn_interval", 2.0)
+        self.frame_keepalive_sec = cfg.get("frame_keepalive_sec", 30)
+        self.record_video = cfg.get("record_video", False)
+        self.debug_random_reward = cfg.get("debug_random_reward", False)
         self.bot_name = cfg.get("bot_name", f"Bot{self.env_id}")
         # Robustness timeouts
         self.agent_idle_timeout = cfg.get("agent_idle_timeout", 600)  # max time without HTTP activity from agent
@@ -679,12 +682,13 @@ class McbotsEnvManager(BaseEnvManager):
             "MCBOTS_WORKSPACE_ROOT": workspace_root,
             "MCBOTS_DISPLAY": display,
             "MCBOTS_LOG_FILE_PATH": game_log_path,
-            "MCBOTS_RECORD_VIDEO": os.environ.get("MCBOTS_RECORD_VIDEO", "false"),
+            "MCBOTS_RECORD_VIDEO": "true" if self.record_video else "false",
             "MCBOTS_MAX_IMAGES_IN_CONTEXT": str(self.max_images_in_context),
             "MCBOTS_KEEP_IMAGES_ON_RESET": str(self.keep_images_on_reset),
             "MCBOTS_AUTO_RESPAWN": "true" if self.auto_respawn else "false",
             "MCBOTS_AUTO_RESPAWN_INTERVAL": str(self.auto_respawn_interval),
-            "MCBOTS_DEBUG_RANDOM_REWARD": os.environ.get("MCBOTS_DEBUG_RANDOM_REWARD", "0"),
+            "MCBOTS_FRAME_KEEPALIVE_SEC": str(self.frame_keepalive_sec),
+            "MCBOTS_DEBUG_RANDOM_REWARD": "1" if self.debug_random_reward else "0",
         }
         if record_dir:
             env["MCBOTS_RECORD_DIR"] = record_dir

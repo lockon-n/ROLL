@@ -170,3 +170,6 @@ custom_envs:
       keep_images_on_reset: 5
       auto_respawn: true
       auto_respawn_interval: 2.0
+      frame_keepalive_sec: 30
+      record_video: true
+      debug_random_reward: true

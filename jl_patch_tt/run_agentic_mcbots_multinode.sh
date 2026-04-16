@@ -6,10 +6,11 @@ unset VIRTUAL_ENV
 export ROLL_RAY_RUNTIME_ENV=1
 export ROLL_PLATFORM=cuda
 # export MCBOTS_INITIAL_USER_INPUT="explore freely!"
+# export MCBOTS_RECORD_VIDEO=true
 
 export TOTAL_NUM_OF_GPUS=$((${ARNOLD_WORKER_GPU}*${ARNOLD_WORKER_NUM}))
 
-# todo, may be 
+# check the MC server runtime config file is created
 export MC_SERVER_HOST=${ARNOLD_MCSERVER_0_HOST}
 mc_server_runtime_config_file="/mnt/hdfs/tiktok_aiic/user/junlongli/mcbots/shared/server-runtime-${ARNOLD_TRIAL_START_TIME}.json"
 
@@ -33,4 +34,4 @@ export MC_SERVER_PORT=$(python3 -c "import json; print(json.load(open('${mc_serv
 echo "MC_SERVER_HOST: ${MC_SERVER_HOST}"
 echo "MC_SERVER_PORT: ${MC_SERVER_PORT}"
 
-python examples/start_agentic_pipeline.py --config_path ../jl_patch_tt --config_name qwen3_5_9B_agentic_mcbots_multinode
+python examples/start_agentic_pipeline.py --config_path ../jl_patch_tt --config_name qwen3_5_4B_agentic_mcbots_multinode
